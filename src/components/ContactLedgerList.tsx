@@ -277,11 +277,11 @@ export const ContactLedgerList: React.FC<ContactLedgerListProps> = ({
 
       {/* Long-Press Popup Menu */}
       {activeMenuContact && (
-        <div 
+        <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-2xs animate-in fade-in select-none"
           onClick={() => setActiveMenuContact(null)}
         >
-          <div 
+          <div
             className="w-full max-w-xs bg-white rounded-3xl p-3 shadow-2xl border border-slate-200 animate-in zoom-in-95 duration-150 space-y-1"
             onClick={(e) => e.stopPropagation()}
           >
@@ -337,11 +337,11 @@ export const ContactLedgerList: React.FC<ContactLedgerListProps> = ({
 
       {/* Delete Confirmation Dialog */}
       {deleteTargetContact && (
-        <div 
+        <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in select-none"
           onClick={() => setDeleteTargetContact(null)}
         >
-          <div 
+          <div
             className="w-full max-w-sm bg-white rounded-3xl p-5 shadow-2xl space-y-4 border border-rose-100"
             onClick={(e) => e.stopPropagation()}
           >
