@@ -119,15 +119,19 @@ export const CustomerShareReceiptModal: React.FC<CustomerShareReceiptModalProps>
     );
   };
 
-  // Handle Share: send the beautifully formatted text receipt via the native share sheet
-  // (text only, no file attached), falling back to WhatsApp with the same text when the
-  // Web Share API isn't available.
+  // Handle Share: generate the visual PDF receipt and attach it via the native share
+  // sheet (Web Share API Level 2), with the formatted text as the companion caption.
+  // Falls back to downloading the PDF + opening WhatsApp with the text when file
+  // sharing isn't supported, and to text-only WhatsApp if PDF generation itself fails.
   const handleShare = async () => {
     setIsSharing(true);
     try {
-      if (navigator.share) {
+      const pdf = await buildReceiptPdf();
+
+      if (navigator.share && navigator.canShare && navigator.canShare({ files: [pdf.file] })) {
         try {
           await navigator.share({
+            files: [pdf.file],
             title: `${businessName} Receipt - ${contact.name}`,
             text: shareTextPayload,
           });
@@ -135,10 +139,22 @@ export const CustomerShareReceiptModal: React.FC<CustomerShareReceiptModalProps>
           return;
         } catch (err: any) {
           if (err?.name === 'AbortError') return; // user cancelled the native share sheet
-          // otherwise fall through to the WhatsApp fallback below
+          // otherwise fall through to the download + WhatsApp fallback below
         }
       }
 
+      // Fallback: download the PDF so it's ready on-device, then open WhatsApp with the text
+      const link = document.createElement('a');
+      link.href = pdf.url;
+      link.download = pdf.filename;
+      link.click();
+
+      const cleanPhone = contact.phone.replace(/[^0-9]/g, '');
+      window.open(`https://wa.me/${cleanPhone}?text=${encodeURIComponent(shareTextPayload)}`, '_blank');
+      if (showToast) showToast('PDF downloaded — opening WhatsApp');
+    } catch (err) {
+      console.error('Share receipt error:', err);
+      // Last resort if PDF generation itself fails: text-only WhatsApp
       const cleanPhone = contact.phone.replace(/[^0-9]/g, '');
       window.open(`https://wa.me/${cleanPhone}?text=${encodeURIComponent(shareTextPayload)}`, '_blank');
       if (showToast) showToast('Receipt opened in WhatsApp');

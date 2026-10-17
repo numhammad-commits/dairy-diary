@@ -14,6 +14,7 @@ import {
   Sparkles
 } from 'lucide-react';
 import { Contact, LedgerEntry, PaymentRecord, BusinessSettings } from '../types/dairy';
+import { generateSawaaPdfDocument } from '../utils/pdfGenerator';
 import { formatPKR, formatDairyReceiptText } from '../utils/formatters';
 import { getCustomerMonthDue } from '../utils/calculations';
 
@@ -137,13 +138,31 @@ export const MonthlyBillingModal: React.FC<MonthlyBillingModalProps> = ({
 
   const { totalMilk, totalAmount, totalReceived, periodDue, previousDue, totalOutstanding, customerEntries } = currentCustomerMetrics();
 
-  // Send WhatsApp bill for current customer: a beautifully formatted text receipt,
-  // shared directly as text — no PDF attached.
+  // Send WhatsApp bill for current customer: generate the visual PDF bill and attach it
+  // via the native share sheet, with the formatted text as the companion caption.
   const handleSendCurrentBill = async () => {
     if (!currentCustomer) return;
     setIsGenerating(true);
 
     try {
+      // 1. Generate customer's monthly PDF bill
+      const pdfRes = await generateSawaaPdfDocument(
+        currentCustomer,
+        customerEntries,
+        activeMonthDisplay,
+        businessSettings,
+        {
+          totalMilk,
+          totalAmount,
+          totalReceived,
+          periodDue,
+          previousDue,
+          totalOutstanding,
+        },
+        isPremium
+      );
+
+      // 2. Prepare the beautifully formatted companion text
       const text = formatDairyReceiptText({
         customerName: currentCustomer.name,
         date: activeMonthDisplay,
@@ -156,43 +175,54 @@ export const MonthlyBillingModal: React.FC<MonthlyBillingModalProps> = ({
         footerBusinessName: businessSettings?.businessName,
       });
 
-      let sharedViaNative = false;
-      if (navigator.share) {
+      // 3. Prefer attaching the PDF directly via the native share sheet (Web Share API
+      // Level 2). Falls back to downloading the PDF + opening WhatsApp with the text
+      // when file sharing isn't supported.
+      let sharedViaFile = false;
+      if (navigator.share && navigator.canShare && navigator.canShare({ files: [pdfRes.file] })) {
         try {
           await navigator.share({
+            files: [pdfRes.file],
             title: `Milk Bill — ${currentCustomer.name} — ${activeMonthDisplay}`,
             text,
           });
-          sharedViaNative = true;
+          sharedViaFile = true;
         } catch (err: any) {
           if (err?.name === 'AbortError') {
             // User cancelled the native share sheet — don't mark as billed or advance the queue.
             setIsGenerating(false);
             return;
           }
-          // otherwise fall through to the WhatsApp fallback below
+          // otherwise fall through to the download + WhatsApp fallback below
         }
       }
 
-      if (!sharedViaNative) {
+      if (!sharedViaFile) {
+        const downloadLink = document.createElement('a');
+        downloadLink.href = pdfRes.url;
+        downloadLink.download = pdfRes.filename;
+        document.body.appendChild(downloadLink);
+        downloadLink.click();
+        document.body.removeChild(downloadLink);
+
         const cleanPhone = getCleanPhoneNumber(currentCustomer.phone);
         const waUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(text)}`;
         window.open(waUrl, '_blank');
       }
 
-      // Mark customer as billed for current month
+      // 4. Mark customer as billed for current month
       onMarkCustomerBilled(currentCustomer.id, currentMonthKey);
       setSentCount((prev) => prev + 1);
 
       if (showToast) {
         showToast(
-          sharedViaNative
+          sharedViaFile
             ? `Bill shared for ${currentCustomer.name}`
             : `Bill opened in WhatsApp for ${currentCustomer.name}`
         );
       }
 
-      // Move to next customer
+      // 5. Move to next customer
       if (currentIndex + 1 < pendingCustomers.length) {
         setCurrentIndex((prev) => prev + 1);
       } else {
@@ -200,8 +230,8 @@ export const MonthlyBillingModal: React.FC<MonthlyBillingModalProps> = ({
         setCurrentIndex(pendingCustomers.length);
       }
     } catch (err) {
-      console.error('Failed to send bill:', err);
-      if (showToast) showToast('Failed to send bill for this customer');
+      console.error('Failed to generate or send bill:', err);
+      if (showToast) showToast('Failed to generate PDF bill for this customer');
     } finally {
       setIsGenerating(false);
     }

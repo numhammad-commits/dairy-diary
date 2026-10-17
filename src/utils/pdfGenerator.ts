@@ -1,8 +1,5 @@
 import { jsPDF } from 'jspdf';
-import QRCode from 'qrcode';
 import { Contact, LedgerEntry, BusinessSettings } from '../types/dairy';
-import { formatPKR } from './formatters';
-import { getEnabledPaymentAccounts } from './paymentAccounts';
 
 export interface GeneratedPdfResult {
   blob: Blob;
@@ -13,6 +10,103 @@ export interface GeneratedPdfResult {
   dueDateStr: string;
   isPremium: boolean;
 }
+
+// =========================================================================
+// Small vector icon helpers — jsPDF's built-in fonts (Helvetica/Times/Courier)
+// don't include emoji glyphs, so icons the reference design shows as emoji
+// (📞 📍 ❤️) are drawn as simple shapes instead of relying on font support.
+// =========================================================================
+
+function drawPhoneIcon(doc: jsPDF, x: number, y: number, color: [number, number, number]) {
+  doc.setFillColor(color[0], color[1], color[2]);
+  doc.roundedRect(x, y, 2.6, 4.2, 0.6, 0.6, 'F');
+}
+
+function drawPinIcon(doc: jsPDF, x: number, y: number, color: [number, number, number]) {
+  doc.setFillColor(color[0], color[1], color[2]);
+  doc.circle(x + 1.3, y + 1.3, 1.3, 'F');
+  doc.triangle(x + 0.1, y + 2.0, x + 2.5, y + 2.0, x + 1.3, y + 4.6, 'F');
+}
+
+function drawHeartIcon(doc: jsPDF, cx: number, cy: number, size: number, color: [number, number, number]) {
+  const r = size / 2;
+  doc.setFillColor(color[0], color[1], color[2]);
+  doc.circle(cx - r * 0.5, cy - r * 0.3, r * 0.55, 'F');
+  doc.circle(cx + r * 0.5, cy - r * 0.3, r * 0.55, 'F');
+  doc.triangle(cx - r, cy - r * 0.1, cx + r, cy - r * 0.1, cx, cy + r, 'F');
+}
+
+// =========================================================================
+// Days Taken / Days Missed — a new display-only metric computed straight from
+// the raw entries array (never touches calculations.ts or any due/amount math).
+// For a plain "Month YYYY" statement, the full calendar month is used; for any
+// other period title (3-month/yearly/custom-range callers), the actual date
+// span covered by the entries themselves is used instead.
+// =========================================================================
+
+function tryParseMonthTitle(title: string): { year: number; month: number } | null {
+  const months = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
+  const match = title.trim().toLowerCase().match(/^([a-z]+)\s+(\d{4})$/);
+  if (!match) return null;
+  const monthIdx = months.indexOf(match[1]);
+  if (monthIdx === -1) return null;
+  return { year: parseInt(match[2], 10), month: monthIdx + 1 };
+}
+
+function computeDeliveryDayStats(entries: LedgerEntry[], periodTitle: string): { daysTaken: number; missedDaysLabel: string } {
+  if (entries.length === 0) {
+    return { daysTaken: 0, missedDaysLabel: 'None' };
+  }
+
+  const takenDates = Array.from(new Set(entries.map((e) => e.date))).sort();
+  const daysTaken = takenDates.length;
+
+  let rangeStart: Date;
+  let rangeEnd: Date;
+
+  const monthMatch = tryParseMonthTitle(periodTitle);
+  if (monthMatch) {
+    rangeStart = new Date(monthMatch.year, monthMatch.month - 1, 1);
+    rangeEnd = new Date(monthMatch.year, monthMatch.month, 0);
+  } else {
+    const [fy, fm, fd] = takenDates[0].split('-').map(Number);
+    const [ly, lm, ld] = takenDates[takenDates.length - 1].split('-').map(Number);
+    rangeStart = new Date(fy, fm - 1, fd);
+    rangeEnd = new Date(ly, lm - 1, ld);
+  }
+
+  const takenSet = new Set(takenDates);
+  const missedDayNumbers: number[] = [];
+  const cursor = new Date(rangeStart);
+  while (cursor <= rangeEnd) {
+    const y = cursor.getFullYear();
+    const m = String(cursor.getMonth() + 1).padStart(2, '0');
+    const d = String(cursor.getDate()).padStart(2, '0');
+    if (!takenSet.has(`${y}-${m}-${d}`)) {
+      missedDayNumbers.push(cursor.getDate());
+    }
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  let missedDaysLabel: string;
+  if (missedDayNumbers.length === 0) {
+    missedDaysLabel = 'None';
+  } else if (missedDayNumbers.length > 8) {
+    missedDaysLabel = `${missedDayNumbers.slice(0, 6).join(', ')} +${missedDayNumbers.length - 6} more`;
+  } else {
+    missedDaysLabel = missedDayNumbers.join(', ');
+  }
+
+  return { daysTaken, missedDaysLabel };
+}
+
+// =========================================================================
+// CUSTOMER STATEMENT PDF — clean, modern summary-statement design (blue header,
+// billed-to card, 2-column details grid, total bill + balance boxes, friendly
+// footer). Replaces the previous formal itemized-bill layout; the QR/payment
+// accounts section, line-item transaction table, and 7-day payment notice were
+// intentionally dropped since the new reference is a pure summary statement.
+// =========================================================================
 
 export async function generateSawaaPdfDocument(
   contact: Contact,
@@ -42,591 +136,243 @@ export async function generateSawaaPdfDocument(
 
   // Company Information (Business settings configured by user)
   const companyName = businessSettings?.businessName?.trim() || 'Dairy Farm';
-  const companySubtitle = 'Fresh Milk Distribution & Dairy Management';
   const companyPhone = businessSettings?.phone?.trim() || '';
   const companyLocation = businessSettings?.location?.trim() || '';
-  const companyTagline = 'Developed by SAWAA Networking';
-
-  // Enabled Payment Accounts (Single Source of Truth based on showOnPdf)
-  const enabledAccounts = getEnabledPaymentAccounts(businessSettings);
   const currSym = businessSettings?.currencySymbol?.trim() || 'Rs';
 
-  // Financial Calculations (Single Source of Truth)
+  // Financial Calculations (Single Source of Truth — passed in from getCustomerMonthDue
+  // via the caller's `financials` object; never recalculated here)
   const totalMilk = financials?.totalMilk ?? entries.reduce((s, e) => s + e.liters, 0);
   const totalAmount = financials?.totalAmount ?? entries.reduce((s, e) => s + e.totalAmount, 0);
   const totalReceived = financials?.totalReceived ?? entries.reduce((s, e) => s + e.receivedAmount, 0);
   const periodDue = financials?.periodDue ?? (totalAmount - totalReceived);
   const previousDue = financials?.previousDue ?? 0;
   const totalOutstanding = financials?.totalOutstanding ?? (periodDue + previousDue);
+  const avgRate = totalMilk > 0 ? totalAmount / totalMilk : 0;
 
-  // Dates: Bill Generated Today + 7 Days Payment Due
+  // Dates: Bill Generated Today + 7 Days Payment Due (still returned for callers like
+  // ReportPeriodBottomSheet that display these alongside the PDF, even though the new
+  // design itself doesn't print a bill number/due-date line)
   const now = new Date();
   const billDateStr = now.toLocaleDateString('en-US', { day: '2-digit', month: 'short', year: 'numeric' });
   const dueDate = new Date();
   dueDate.setDate(dueDate.getDate() + 7);
   const dueDateStr = dueDate.toLocaleDateString('en-US', { day: '2-digit', month: 'short', year: 'numeric' });
 
-  // Bill Number
-  const billNum = `BILL-${contact.id.replace(/[^0-9]/g, '').padStart(3, '0')}-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const { daysTaken, missedDaysLabel } = computeDeliveryDayStats(entries, periodTitle);
 
-  // Helper for Free-tier subtle watermark
-  const drawBackgroundWatermark = () => {
-    if (!isPremium) {
-      const centerX = pageWidth / 2;
-      const centerY = pageHeight / 2 - 10;
-
-      doc.setDrawColor(30, 86, 49);
-      doc.setFillColor(242, 248, 244);
-      doc.roundedRect(centerX - 42, centerY - 45, 84, 80, 16, 16, 'FD');
-
-      doc.setTextColor(30, 86, 49);
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(22);
-      doc.text('DAIRY DIARY', centerX, centerY, { align: 'center' });
-
-      doc.setFontSize(8);
-      doc.setFont('helvetica', 'normal');
-      doc.setTextColor(100, 116, 139);
-      doc.text('OFFICIAL STATEMENT · DEVELOPED BY SAWAA NETWORKING', centerX, centerY + 8, { align: 'center' });
-      doc.text('UPGRADE TO PREMIUM TO REMOVE WATERMARK', centerX, centerY + 14, { align: 'center' });
-    }
-  };
-
-  // Draw initial page watermark
-  drawBackgroundWatermark();
+  // Unobtrusive free-tier notice, kept out of the way of the new minimal layout
+  if (!isPremium) {
+    doc.setTextColor(226, 232, 240);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8);
+    doc.text('DAIRY DIARY · UPGRADE TO PREMIUM TO REMOVE THIS NOTICE', pageWidth / 2, pageHeight - 5, { align: 'center' });
+  }
 
   // =========================================================================
-  // 1. TOP HEADER APP BAR (Deep Corporate Green #1E5631)
+  // 1. HEADER: Blue card (#1E3A8A) with logo, business name, phone, address
   // =========================================================================
-  doc.setFillColor(30, 86, 49);
-  doc.rect(margin, 12, contentWidth, 24, 'F');
+  const headerY = 12;
+  const headerH = 46;
+  doc.setFillColor(30, 58, 138);
+  doc.roundedRect(margin, headerY, contentWidth, headerH, 6, 6, 'F');
 
-  // BUSINESS BRAND LOGO (Uploaded from Settings with fallback to default emblem)
-  const logoX = margin + 4;
-  const logoY = 15;
-  const logoBoxSize = 18;
+  const logoCX = margin + 14;
+  const logoCY = headerY + 14;
+  const logoR = 9;
+  doc.setFillColor(255, 255, 255);
+  doc.circle(logoCX, logoCY, logoR, 'F');
 
-  let isLogoRendered = false;
+  let logoDrawn = false;
   if (businessSettings?.logoUrl) {
     try {
-      doc.setFillColor(255, 255, 255);
-      doc.roundedRect(logoX, logoY, logoBoxSize, logoBoxSize, 3, 3, 'F');
       const imgFormat = businessSettings.logoUrl.startsWith('data:image/jpeg') || businessSettings.logoUrl.startsWith('data:image/jpg') ? 'JPEG' : 'PNG';
-      doc.addImage(businessSettings.logoUrl, imgFormat, logoX + 1, logoY + 1, logoBoxSize - 2, logoBoxSize - 2);
-      isLogoRendered = true;
+      const d = (logoR - 1.5) * 2;
+      doc.addImage(businessSettings.logoUrl, imgFormat, logoCX - d / 2, logoCY - d / 2, d, d);
+      logoDrawn = true;
     } catch (err) {
       console.warn('Failed to render uploaded logo in PDF, using fallback emblem:', err);
-      isLogoRendered = false;
     }
   }
-
-  if (!isLogoRendered) {
-    doc.setFillColor(255, 255, 255);
-    doc.roundedRect(logoX, logoY, 18, 18, 4, 4, 'F');
-
-    // Default Fallback Emblem: Logo A (The Ledger Droplet)
-    doc.setFillColor(27, 67, 50);
-    doc.circle(logoX + 8, logoY + 10, 5, 'F');
-    doc.setFillColor(45, 106, 79);
-    doc.circle(logoX + 10.5, logoY + 9, 4, 'F');
-    doc.setFillColor(255, 255, 255);
-    doc.circle(logoX + 9, logoY + 9.5, 2.5, 'F');
-    doc.setFillColor(245, 158, 11);
-    doc.circle(logoX + 9.5, logoY + 12, 1.2, 'F');
+  if (!logoDrawn) {
+    doc.setFillColor(30, 58, 138);
+    doc.circle(logoCX, logoCY + 1, logoR - 3.5, 'F');
+    doc.setFillColor(96, 165, 250);
+    doc.circle(logoCX + 2, logoCY - 0.5, logoR - 5, 'F');
   }
 
-  // Header Business Information
   doc.setTextColor(255, 255, 255);
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(14);
-  doc.text(companyName.toUpperCase(), logoX + 22, 21);
+  doc.setFontSize(18);
+  doc.text(companyName.toUpperCase(), margin + 28, headerY + 17);
 
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(8);
-  doc.text(companySubtitle, logoX + 22, 26);
-
-  doc.setFontSize(7.5);
-  doc.setTextColor(167, 243, 208);
-  doc.text(companyTagline, logoX + 22, 31);
-
-  // Right side of Header: Phone, Location, Premium/Date
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(8);
-  doc.setTextColor(255, 255, 255);
   if (companyPhone) {
-    doc.text(`Phone: ${companyPhone}`, pageWidth - margin - 5, 20, { align: 'right' });
+    const rowY = headerY + 27;
+    drawPhoneIcon(doc, margin + 4, rowY - 3.2, [219, 234, 254]);
+    doc.setTextColor(219, 234, 254);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9.5);
+    doc.text(companyPhone, margin + 9, rowY);
   }
+
   if (companyLocation) {
-    doc.text(companyLocation, pageWidth - margin - 5, 25, { align: 'right' });
-  }
-
-  if (isPremium) {
-    doc.setTextColor(253, 230, 138);
-    doc.setFont('helvetica', 'bold');
-    doc.text(`★ PREMIUM ACCOUNT · ${billDateStr}`, pageWidth - margin - 5, 30, { align: 'right' });
-  } else {
-    doc.setTextColor(255, 255, 255);
-    doc.text(`Date: ${billDateStr}`, pageWidth - margin - 5, 30, { align: 'right' });
-  }
-
-  // =========================================================================
-  // 2. MAIN DOCUMENT TITLE: "MONTHLY FRESH MILK BILL" (Section 7)
-  // =========================================================================
-  let yPos = 41;
-
-  doc.setTextColor(30, 86, 49);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(13);
-  doc.text('MONTHLY FRESH MILK BILL', margin, yPos);
-
-  doc.setFontSize(8.5);
-  doc.setFont('helvetica', 'normal');
-  doc.setTextColor(100, 116, 139);
-  doc.text(`Period: ${periodTitle}`, pageWidth - margin, yPos, { align: 'right' });
-
-  yPos += 5;
-
-  // =========================================================================
-  // 3. CUSTOMER INFORMATION & BILLING INFORMATION BOXES (Section 7)
-  // =========================================================================
-  const infoBoxWidth = (contentWidth - 4) / 2;
-  const infoBoxH = 21;
-
-  // Left: Customer Information
-  doc.setFillColor(248, 250, 249);
-  doc.setDrawColor(220, 230, 224);
-  doc.roundedRect(margin, yPos, infoBoxWidth, infoBoxH, 2, 2, 'FD');
-
-  doc.setTextColor(30, 86, 49);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(7.5);
-  doc.text('CUSTOMER INFORMATION', margin + 4, yPos + 4.5);
-
-  doc.setTextColor(30, 41, 59);
-  doc.setFontSize(9);
-  doc.setFont('helvetica', 'bold');
-  doc.text(contact.name, margin + 4, yPos + 9.5);
-
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(8);
-  doc.setTextColor(71, 85, 105);
-  doc.text(`Phone: ${contact.phone || 'N/A'}`, margin + 4, yPos + 14);
-  doc.text(`Address: ${contact.address || 'Local Distribution Area'}`, margin + 4, yPos + 18.5);
-
-  // Right: Billing Information
-  const rightBoxX = margin + infoBoxWidth + 4;
-  doc.setFillColor(248, 250, 249);
-  doc.setDrawColor(220, 230, 224);
-  doc.roundedRect(rightBoxX, yPos, infoBoxWidth, infoBoxH, 2, 2, 'FD');
-
-  doc.setTextColor(30, 86, 49);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(7.5);
-  doc.text('BILLING INFORMATION', rightBoxX + 4, yPos + 4.5);
-
-  doc.setTextColor(71, 85, 105);
-  doc.setFontSize(8);
-  doc.setFont('helvetica', 'normal');
-  doc.text(`Bill Number:`, rightBoxX + 4, yPos + 9.5);
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(30, 41, 59);
-  doc.text(billNum, rightBoxX + infoBoxWidth - 4, yPos + 9.5, { align: 'right' });
-
-  doc.setFont('helvetica', 'normal');
-  doc.setTextColor(71, 85, 105);
-  doc.text(`Bill Date:`, rightBoxX + 4, yPos + 14);
-  doc.text(billDateStr, rightBoxX + infoBoxWidth - 4, yPos + 14, { align: 'right' });
-
-  doc.text(`Payment Due By:`, rightBoxX + 4, yPos + 18.5);
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(185, 28, 28);
-  doc.text(dueDateStr, rightBoxX + infoBoxWidth - 4, yPos + 18.5, { align: 'right' });
-
-  yPos += infoBoxH + 4;
-
-  // =========================================================================
-  // 4. MONTHLY SUMMARY BOXES (Section 8)
-  // 4 Prominent Summary Boxes: TOTAL MILK, TOTAL AMOUNT, TOTAL RECEIVED, REMAINING DUE
-  // =========================================================================
-  const sumBoxW = (contentWidth - 9) / 4;
-  const sumBoxH = 17;
-
-  // Box 1: TOTAL MILK
-  doc.setFillColor(241, 248, 243);
-  doc.setDrawColor(180, 215, 195);
-  doc.roundedRect(margin, yPos, sumBoxW, sumBoxH, 2, 2, 'FD');
-  doc.setTextColor(71, 85, 105);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(7);
-  doc.text('TOTAL MILK', margin + sumBoxW / 2, yPos + 5.5, { align: 'center' });
-  doc.setTextColor(30, 86, 49);
-  doc.setFontSize(10.5);
-  doc.text(`${totalMilk.toFixed(2)} L`, margin + sumBoxW / 2, yPos + 12.5, { align: 'center' });
-
-  // Box 2: TOTAL AMOUNT
-  const s2X = margin + sumBoxW + 3;
-  doc.setFillColor(241, 248, 243);
-  doc.roundedRect(s2X, yPos, sumBoxW, sumBoxH, 2, 2, 'FD');
-  doc.setTextColor(71, 85, 105);
-  doc.setFontSize(7);
-  doc.text('TOTAL AMOUNT', s2X + sumBoxW / 2, yPos + 5.5, { align: 'center' });
-  doc.setTextColor(30, 86, 49);
-  doc.setFontSize(10.5);
-  doc.text(`${currSym} ${Math.round(totalAmount).toLocaleString()}`, s2X + sumBoxW / 2, yPos + 12.5, { align: 'center' });
-
-  // Box 3: TOTAL RECEIVED
-  const s3X = s2X + sumBoxW + 3;
-  doc.setFillColor(241, 248, 243);
-  doc.roundedRect(s3X, yPos, sumBoxW, sumBoxH, 2, 2, 'FD');
-  doc.setTextColor(71, 85, 105);
-  doc.setFontSize(7);
-  doc.text('TOTAL RECEIVED', s3X + sumBoxW / 2, yPos + 5.5, { align: 'center' });
-  doc.setTextColor(15, 118, 110);
-  doc.setFontSize(10.5);
-  doc.text(`${currSym} ${Math.round(totalReceived).toLocaleString()}`, s3X + sumBoxW / 2, yPos + 12.5, { align: 'center' });
-
-  // Box 4: REMAINING DUE (Period Due)
-  const s4X = s3X + sumBoxW + 3;
-  doc.setFillColor(254, 242, 242);
-  doc.setDrawColor(254, 202, 202);
-  doc.roundedRect(s4X, yPos, sumBoxW, sumBoxH, 2, 2, 'FD');
-  doc.setTextColor(185, 28, 28);
-  doc.setFontSize(7);
-  doc.text('REMAINING DUE', s4X + sumBoxW / 2, yPos + 5.5, { align: 'center' });
-  doc.setFontSize(10.5);
-  doc.text(`${currSym} ${Math.round(periodDue).toLocaleString()}`, s4X + sumBoxW / 2, yPos + 12.5, { align: 'center' });
-
-  yPos += sumBoxH + 4;
-
-  // Prominently Highlighted Outstanding Balance Banner (Section 10)
-  doc.setFillColor(254, 243, 199);
-  doc.setDrawColor(245, 158, 11);
-  doc.roundedRect(margin, yPos, contentWidth, 10, 2, 2, 'FD');
-
-  doc.setTextColor(146, 64, 14);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(8);
-  doc.text(`PREVIOUS CARRYOVER BALANCE: ${currSym} ${previousDue.toLocaleString()}   |   ACTIVE BILL: ${currSym} ${Math.round(totalAmount).toLocaleString()}`, margin + 4, yPos + 4.2);
-
-  doc.setFontSize(9);
-  doc.setTextColor(185, 28, 28);
-  doc.text(`TOTAL PAYABLE OUTSTANDING: ${currSym} ${Math.round(totalOutstanding).toLocaleString()}`, margin + 4, yPos + 8.2);
-
-  yPos += 14;
-
-  // =========================================================================
-  // 5. TRANSACTION LEDGER TABLE (Section 9)
-  // Clean table columns: Date, Shift, Milk Category, Liters, Rate, Total, Received, Due
-  // =========================================================================
-  doc.setTextColor(30, 86, 49);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(9);
-  doc.text(`TRANSACTION LEDGER DETAILS`, margin, yPos);
-
-  yPos += 3.5;
-
-  const cols = [
-    { title: 'Date', width: 22, align: 'left' },
-    { title: 'Time', width: 17, align: 'left' },
-    { title: 'Shift', width: 20, align: 'left' },
-    { title: 'Category', width: 25, align: 'left' },
-    { title: 'Quantity', width: 22, align: 'right' },
-    { title: `Rate (${currSym})`, width: 24, align: 'right' },
-    { title: `Total (${currSym})`, width: 26, align: 'right' },
-    { title: `Due (${currSym})`, width: 26, align: 'right' },
-  ];
-
-  // Helper to draw Table Header
-  const drawTableHeader = (topY: number) => {
-    doc.setFillColor(30, 86, 49);
-    doc.rect(margin, topY, contentWidth, 6.5, 'F');
-    doc.setTextColor(255, 255, 255);
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(7.5);
-
-    let curX = margin + 2;
-    cols.forEach((c) => {
-      if (c.align === 'right') {
-        doc.text(c.title, curX + c.width - 4, topY + 4.5, { align: 'right' });
-      } else {
-        doc.text(c.title, curX, topY + 4.5);
-      }
-      curX += c.width;
-    });
-  };
-
-  drawTableHeader(yPos);
-  yPos += 6.5;
-
-  // Render Table Rows (Section 9 & 17 Multi-page Behavior)
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(7.5);
-
-  entries.forEach((entry, idx) => {
-    // Check if we need page break (Section 17)
-    if (yPos > pageHeight - 55) {
-      doc.addPage();
-      drawBackgroundWatermark();
-      yPos = 16;
-      drawTableHeader(yPos);
-      yPos += 6.5;
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(7.5);
-    }
-
-    const isEven = idx % 2 === 0;
-    doc.setFillColor(isEven ? 255 : 249, isEven ? 255 : 251, isEven ? 255 : 250);
-    doc.rect(margin, yPos, contentWidth, 5.5, 'F');
-
-    doc.setDrawColor(230, 238, 233);
-    doc.line(margin, yPos + 5.5, margin + contentWidth, yPos + 5.5);
-
-    doc.setTextColor(30, 41, 59);
-
-    let curX = margin + 2;
-    // Date
-    doc.text(entry.date, curX, yPos + 3.8);
-    curX += cols[0].width;
-
-    // Time
-    doc.text(entry.timestamp || '-', curX, yPos + 3.8);
-    curX += cols[1].width;
-
-    // Shift
-    doc.text(entry.shift.toUpperCase(), curX, yPos + 3.8);
-    curX += cols[2].width;
-
-    // Category
-    doc.text((entry.milkType || 'Buffalo').toUpperCase(), curX, yPos + 3.8);
-    curX += cols[3].width;
-
-    // Quantity (L)
-    doc.setFont('helvetica', 'bold');
-    doc.text(`${entry.liters.toFixed(2)} L`, curX + cols[4].width - 4, yPos + 3.8, { align: 'right' });
+    const rowY = headerY + 35;
+    drawPinIcon(doc, margin + 4, rowY - 3.6, [219, 234, 254]);
+    doc.setTextColor(219, 234, 254);
     doc.setFont('helvetica', 'normal');
-    curX += cols[4].width;
-
-    // Rate
-    doc.text(`${currSym} ${entry.ratePerLiter.toFixed(2)}`, curX + cols[5].width - 4, yPos + 3.8, { align: 'right' });
-    curX += cols[5].width;
-
-    // Total Amount
-    doc.setFont('helvetica', 'bold');
-    doc.text(`${currSym} ${Math.round(entry.totalAmount).toLocaleString()}`, curX + cols[6].width - 4, yPos + 3.8, { align: 'right' });
-    doc.setFont('helvetica', 'normal');
-    curX += cols[6].width;
-
-    // Due Amount
-    doc.text(`${currSym} ${Math.round(entry.dueAmount).toLocaleString()}`, curX + cols[7].width - 4, yPos + 3.8, { align: 'right' });
-
-    yPos += 5.5;
-  });
-
-  // Table Period Summary Row
-  doc.setFillColor(235, 245, 238);
-  doc.rect(margin, yPos, contentWidth, 6.5, 'F');
-  doc.setDrawColor(180, 215, 195);
-  doc.rect(margin, yPos, contentWidth, 6.5, 'S');
-
-  doc.setTextColor(30, 86, 49);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(7.5);
-  doc.text('TOTAL PERIOD TRANSACTIONS', margin + 3, yPos + 4.5);
-
-  const litColX = margin + cols[0].width + cols[1].width + cols[2].width + cols[3].width;
-  doc.text(`${totalMilk.toFixed(2)} L`, litColX + cols[4].width - 4, yPos + 4.5, { align: 'right' });
-
-  const amtColX = litColX + cols[4].width + cols[5].width;
-  doc.text(`${currSym} ${Math.round(totalAmount).toLocaleString()}`, amtColX + cols[6].width - 4, yPos + 4.5, { align: 'right' });
-
-  const dueColX = amtColX + cols[6].width;
-  doc.text(`${currSym} ${Math.round(periodDue).toLocaleString()}`, dueColX + cols[7].width - 4, yPos + 4.5, { align: 'right' });
-
-  yPos += 11;
-
-  // Check if we need room for Payment, Terms & Signature
-  if (yPos > pageHeight - 55) {
-    doc.addPage();
-    drawBackgroundWatermark();
-    yPos = 16;
+    doc.setFontSize(9.5);
+    doc.text(companyLocation, margin + 9, rowY);
   }
 
-  // =========================================================================
-  // 6. PAYMENT SECTION & QR CODE (Sections 11, 12, 13)
-  // Separate payment details from calculations, strictly showing ONLY enabled accounts
-  // =========================================================================
-  if (enabledAccounts.length === 0) {
-    const boxH = 13;
-    doc.setFillColor(248, 250, 249);
-    doc.setDrawColor(220, 230, 224);
-    doc.roundedRect(margin, yPos, contentWidth, boxH, 2, 2, 'FD');
-
-    doc.setTextColor(30, 86, 49);
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(8);
-    doc.text('PAYMENT DETAILS', margin + 4, yPos + 5);
-
-    doc.setTextColor(100, 116, 139);
-    doc.setFont('helvetica', 'italic');
-    doc.setFontSize(7.5);
-    doc.text('No payment account has been enabled for this business.', margin + 4, yPos + 9.5);
-
-    yPos += boxH + 4;
-  } else {
-    const boxH = Math.max(30, 11 + enabledAccounts.length * 5);
-    doc.setFillColor(248, 250, 249);
-    doc.setDrawColor(220, 230, 224);
-    doc.roundedRect(margin, yPos, contentWidth, boxH, 2, 2, 'FD');
-
-    // Title
-    doc.setTextColor(30, 86, 49);
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(8);
-    doc.text('PAYMENT DETAILS', margin + 4, yPos + 5.5);
-
-    // List ONLY Enabled Accounts (Section 12)
-    let accY = yPos + 10.5;
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(7.5);
-    doc.setTextColor(51, 65, 85);
-
-    enabledAccounts.forEach((acc) => {
-      let lineText = '';
-      if (acc.id === 'bank_transfer') {
-        lineText = `${acc.name}: ${acc.secondaryDetail || ''}  |  Title: ${acc.accountTitle}  |  IBAN/Acc: ${acc.primaryDetail}`;
-      } else {
-        lineText = `${acc.name}: Title: ${acc.accountTitle}  |  Acc/Mobile: ${acc.primaryDetail}`;
-      }
-      doc.text(lineText, margin + 4, accY);
-      accY += 5;
-    });
-
-    // Real QR Code on right side (Section 13) - High Clarity, Non-overlapping Layout
-    const primaryAcc = enabledAccounts[0];
-    const qrBoxW = 32;
-    const qrBoxH = boxH - 4;
-    const qrBoxX = pageWidth - margin - qrBoxW - 2;
-    const qrBoxY = yPos + 2;
-
-    let qrImageDataUrl: string | undefined = primaryAcc.qrCodeUrl;
-
-    if (!qrImageDataUrl && primaryAcc.primaryDetail) {
-      try {
-        qrImageDataUrl = await QRCode.toDataURL(
-          `${primaryAcc.name}: ${primaryAcc.primaryDetail} (Title: ${primaryAcc.accountTitle})`,
-          {
-            margin: 4,
-            width: 256,
-            color: {
-              dark: '#000000',
-              light: '#FFFFFF',
-            },
-            errorCorrectionLevel: 'M',
-          }
-        );
-      } catch (err) {
-        console.warn('QR generation warning:', err);
-      }
-    }
-
-    if (qrImageDataUrl) {
-      // Clean white high-contrast card background with subtle green border
-      doc.setFillColor(255, 255, 255);
-      doc.setDrawColor(180, 215, 195);
-      doc.roundedRect(qrBoxX, qrBoxY, qrBoxW, qrBoxH, 2, 2, 'FD');
-
-      // 1. Text Label strictly positioned ABOVE the QR code (no overlap)
-      doc.setTextColor(30, 86, 49);
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(5.8);
-      const qrLabel = primaryAcc.name ? `SCAN TO PAY (${primaryAcc.name.toUpperCase()})` : 'SCAN TO PAY';
-      doc.text(qrLabel, qrBoxX + qrBoxW / 2, qrBoxY + 4, { align: 'center' });
-
-      // 2. High-contrast QR code image cleanly placed below the label with quiet zone
-      const qrSize = Math.min(qrBoxW - 6, qrBoxH - 6.5);
-      const qrImgX = qrBoxX + (qrBoxW - qrSize) / 2;
-      const qrImgY = qrBoxY + 5;
-
-      try {
-        doc.addImage(qrImageDataUrl, 'PNG', qrImgX, qrImgY, qrSize, qrSize);
-      } catch (e) {
-        // Image embedding fallback
-      }
-    }
-
-    yPos += boxH + 3.5;
-  }
+  let yPos = headerY + headerH + 10;
 
   // =========================================================================
-  // 7. 7-DAY PAYMENT DEADLINE NOTICE (Section 14)
-  // =========================================================================
-  doc.setFillColor(254, 243, 199);
-  doc.setDrawColor(251, 191, 36);
-  doc.roundedRect(margin, yPos, contentWidth, 9.5, 2, 2, 'FD');
-
-  doc.setTextColor(146, 64, 14);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(7.5);
-  doc.text('PAYMENT NOTICE: After the bill is generated, the customer has 7 days to pay the outstanding dues.', margin + 4, yPos + 4);
-
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(7);
-  doc.text(`Bill Generated Date: ${billDateStr}   |   Payment Due Date: ${dueDateStr} (Strict 7-Day Window)`, margin + 4, yPos + 7.5);
-
-  yPos += 14;
-
-  // =========================================================================
-  // 8. SIGNATURES AREA (Section 15)
-  // =========================================================================
-  const sigLineY = yPos + 7;
-  const sigWidth = 52;
-
-  // Left: Authorized Signature
-  doc.setDrawColor(148, 163, 184);
-  doc.setLineDashPattern([1, 1], 0);
-  doc.line(margin + 4, sigLineY, margin + 4 + sigWidth, sigLineY);
-  doc.setLineDashPattern([], 0);
-
-  doc.setTextColor(71, 85, 105);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(7.5);
-  doc.text('Authorized Signature', margin + 4 + sigWidth / 2, sigLineY + 3.8, { align: 'center' });
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(6.5);
-  doc.text(companyName, margin + 4 + sigWidth / 2, sigLineY + 7, { align: 'center' });
-
-  // Right: Customer Signature
-  const custSigX = pageWidth - margin - sigWidth - 4;
-  doc.setDrawColor(148, 163, 184);
-  doc.setLineDashPattern([1, 1], 0);
-  doc.line(custSigX, sigLineY, custSigX + sigWidth, sigLineY);
-  doc.setLineDashPattern([], 0);
-
-  doc.setTextColor(71, 85, 105);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(7.5);
-  doc.text('Customer Signature', custSigX + sigWidth / 2, sigLineY + 3.8, { align: 'center' });
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(6.5);
-  doc.text(contact.name, custSigX + sigWidth / 2, sigLineY + 7, { align: 'center' });
-
-  // =========================================================================
-  // 9. FOOTER (Section 18 & 22)
-  // Official branding: "Dairy Diary · Developed by SAWAA Networking"
+  // 2. BILLED TO + STATEMENT pill
   // =========================================================================
   doc.setTextColor(148, 163, 184);
-  doc.setFont('helvetica', 'normal');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(7.5);
+  doc.text('BILLED TO', margin, yPos);
+
+  doc.setTextColor(17, 24, 39);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(14);
+  doc.text(contact.name, margin, yPos + 7);
+
+  if (contact.address) {
+    doc.setTextColor(107, 114, 128);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    doc.text(contact.address, margin, yPos + 13);
+  }
+
+  const pillW = 48;
+  const pillH = 8;
+  const pillX = pageWidth - margin - pillW;
+  doc.setFillColor(219, 234, 254);
+  doc.roundedRect(pillX, yPos - 6, pillW, pillH, 3, 3, 'F');
+  doc.setTextColor(30, 64, 175);
+  doc.setFont('helvetica', 'bold');
   doc.setFontSize(7);
-  doc.text(
-    `${companyName} — Fresh Milk Distribution  ·  Generated by Dairy Diary  ·  Developed by SAWAA Networking`,
-    pageWidth / 2,
-    pageHeight - 7,
-    { align: 'center' }
-  );
+  doc.text('STATEMENT', pillX + pillW / 2, yPos - 1, { align: 'center' });
+
+  doc.setTextColor(30, 58, 138);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.text(periodTitle, pillX + pillW, yPos + 7, { align: 'right' });
+
+  yPos += 20;
+
+  // Dashed separator helper (same technique as the signature lines in the old design)
+  const drawDashedLine = (y: number) => {
+    doc.setDrawColor(203, 213, 225);
+    doc.setLineDashPattern([1.5, 1.5], 0);
+    doc.line(margin, y, pageWidth - margin, y);
+    doc.setLineDashPattern([], 0);
+  };
+  drawDashedLine(yPos);
+  yPos += 8;
+
+  // =========================================================================
+  // 3. Details grid (2 columns)
+  // =========================================================================
+  const colLeftX = margin;
+  const colRightX = margin + contentWidth / 2;
+  const rowH = 14;
+
+  const drawGridRow = (leftLabel: string, leftValue: string, rightLabel: string, rightValue: string, rowY: number) => {
+    doc.setTextColor(107, 114, 128);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.text(leftLabel, colLeftX, rowY);
+    if (rightLabel) doc.text(rightLabel, colRightX, rowY);
+
+    doc.setTextColor(17, 24, 39);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(11.5);
+    doc.text(leftValue, colLeftX, rowY + 6);
+    if (rightValue) doc.text(rightValue, colRightX, rowY + 6);
+  };
+
+  drawGridRow('Total Milk', `${totalMilk.toFixed(2)} L`, 'Rate', `${currSym}${avgRate.toFixed(0)} / L`, yPos);
+  yPos += rowH;
+  drawGridRow('Days Taken', `${daysTaken} Day${daysTaken === 1 ? '' : 's'}`, 'Days Missed', missedDaysLabel, yPos);
+  yPos += rowH;
+  drawGridRow('Total Amount', `${currSym}${Math.round(totalAmount).toLocaleString()}`, 'Received', `${currSym}${Math.round(totalReceived).toLocaleString()}`, yPos);
+  yPos += rowH;
+
+  // Only shown when there's a real carryover balance, keeping the common zero-previous-due
+  // case visually identical to the reference's exact 3-row grid.
+  if (previousDue > 0) {
+    drawGridRow('Previous Balance', `${currSym}${Math.round(previousDue).toLocaleString()}`, '', '', yPos);
+    yPos += rowH;
+  }
+
+  yPos -= 4;
+  drawDashedLine(yPos);
+  yPos += 10;
+
+  // =========================================================================
+  // 4. Total Bill box
+  // =========================================================================
+  const boxH = 16;
+  doc.setFillColor(243, 244, 246);
+  doc.roundedRect(margin, yPos, contentWidth, boxH, 3, 3, 'F');
+  doc.setTextColor(30, 58, 138);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10);
+  doc.text('TOTAL BILL', margin + 6, yPos + boxH / 2 + 2);
+  doc.setFontSize(18);
+  doc.text(`${currSym}${Math.round(totalAmount).toLocaleString()}`, pageWidth - margin - 6, yPos + boxH / 2 + 2.5, { align: 'right' });
+  yPos += boxH + 5;
+
+  // =========================================================================
+  // 5. Balance box — green "All Clear" when fully paid, red "Balance Due" otherwise.
+  // Uses totalOutstanding (period due + previous due) as the authoritative "what's
+  // still owed" figure, consistent with how the rest of the app treats it.
+  // =========================================================================
+  const isAllClear = totalOutstanding <= 0;
+  if (isAllClear) {
+    doc.setFillColor(220, 252, 231);
+  } else {
+    doc.setFillColor(254, 226, 226);
+  }
+  doc.roundedRect(margin, yPos, contentWidth, boxH, 3, 3, 'F');
+  if (isAllClear) {
+    doc.setTextColor(21, 128, 61);
+  } else {
+    doc.setTextColor(185, 28, 28);
+  }
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10);
+  doc.text(isAllClear ? 'Balance (All Clear)' : 'Balance Due', margin + 6, yPos + boxH / 2 + 2);
+  doc.setFontSize(14);
+  doc.text(`${currSym}${Math.round(totalOutstanding).toLocaleString()}`, pageWidth - margin - 6, yPos + boxH / 2 + 2.5, { align: 'right' });
+  yPos += boxH + 14;
+
+  // =========================================================================
+  // 6. Footer
+  // =========================================================================
+  drawHeartIcon(doc, pageWidth / 2, yPos, 4, [239, 68, 68]);
+  yPos += 8;
+  doc.setTextColor(17, 24, 39);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10);
+  doc.text('Thank you for your business!', pageWidth / 2, yPos, { align: 'center' });
+  yPos += 6;
+  doc.setTextColor(107, 114, 128);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8.5);
+  doc.text('Have a wonderful day.', pageWidth / 2, yPos, { align: 'center' });
+  yPos += 8;
+  doc.setTextColor(156, 163, 175);
+  doc.setFont('helvetica', 'italic');
+  doc.setFontSize(7);
+  doc.text('Powered by Dairy Diary', pageWidth / 2, yPos, { align: 'center' });
 
   // Return generated result
   const pdfBlob = doc.output('blob');
-  const filename = `Dairy_Diary_Monthly_Bill_${contact.name.replace(/[^a-zA-Z0-9]/g, '_')}_${periodTitle.replace(/[^a-zA-Z0-9]/g, '_')}.pdf`;
+  const filename = `Dairy_Diary_Statement_${contact.name.replace(/[^a-zA-Z0-9]/g, '_')}_${periodTitle.replace(/[^a-zA-Z0-9]/g, '_')}.pdf`;
   const pdfUrl = URL.createObjectURL(pdfBlob);
   const pdfFile = new File([pdfBlob], filename, { type: 'application/pdf' });
 
