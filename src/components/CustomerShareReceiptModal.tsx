@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { ArrowLeft, X, Share2, Download, Eye, Check, FileText, Calendar, Clock, DollarSign, Smartphone } from 'lucide-react';
+import { ArrowLeft, X, Share2, Download, Eye, Check, FileText, Calendar, Clock, DollarSign, Smartphone, Loader2 } from 'lucide-react';
 import { Contact, LedgerEntry, PaymentRecord, BusinessSettings } from '../types/dairy';
 import { formatPKR, formatLiters, getDeviceTodayDate } from '../utils/formatters';
 import { generateSawaaPdfDocument } from '../utils/pdfGenerator';
@@ -36,6 +36,7 @@ export const CustomerShareReceiptModal: React.FC<CustomerShareReceiptModalProps>
   const [activeTab, setActiveTab] = useState<'due' | 'payment'>('due');
   const [isFullscreenPreview, setIsFullscreenPreview] = useState<boolean>(false);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState<boolean>(false);
+  const [isSharing, setIsSharing] = useState<boolean>(false);
 
   const businessName = businessSettings?.businessName || 'Dairy Diary';
 
@@ -92,50 +93,78 @@ export const CustomerShareReceiptModal: React.FC<CustomerShareReceiptModalProps>
     }
   }, [activeTab, businessName, contact.name, activeMonthDisplay, currentTodayStr, currentTimeStr, metrics, latestPayment]);
 
-  // Handle Share (Navigator share sheet or WhatsApp fallback)
-  const handleShare = async () => {
-    if (navigator.share) {
-      try {
-        await navigator.share({
-          title: `${businessName} Receipt - ${contact.name}`,
-          text: shareTextPayload,
-        });
-        if (showToast) showToast('Shared successfully!');
-        return;
-      } catch (err) {
-        // Fall through to WhatsApp / clipboard if share sheet canceled or unsupported
-      }
-    }
+  // Shared PDF generation, reused by both the Share and Download PDF buttons so they
+  // always attach/download the exact same document.
+  const buildReceiptPdf = async () => {
+    const monthEntries = entries.filter(
+      (e) => e.contactId === contact.id && e.date.startsWith(activeMonthDisplay.substring(0, 7))
+    );
 
-    // Direct WhatsApp share
-    const cleanPhone = contact.phone.replace(/[^0-9]/g, '');
-    const url = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(shareTextPayload)}`;
-    window.open(url, '_blank');
-    if (showToast) showToast('Receipt opened in WhatsApp');
+    return generateSawaaPdfDocument(
+      contact,
+      monthEntries.length > 0 ? monthEntries : entries.filter((e) => e.contactId === contact.id),
+      activeMonthDisplay,
+      businessSettings,
+      {
+        totalMilk: metrics.milk,
+        totalAmount: metrics.amount,
+        totalReceived: metrics.received,
+        periodDue: metrics.due,
+        previousDue: metrics.previousDue,
+        totalOutstanding: metrics.totalOutstanding,
+      }
+    );
+  };
+
+  // Handle Share: generate the PDF receipt and attach it via the native share sheet
+  // (Web Share API Level 2). Falls back to downloading the PDF + opening WhatsApp with
+  // the text summary when file sharing isn't supported, and to text-only WhatsApp if
+  // PDF generation itself fails.
+  const handleShare = async () => {
+    setIsSharing(true);
+    try {
+      const pdf = await buildReceiptPdf();
+
+      if (navigator.share && navigator.canShare && navigator.canShare({ files: [pdf.file] })) {
+        try {
+          await navigator.share({
+            files: [pdf.file],
+            title: `${businessName} Receipt - ${contact.name}`,
+            text: shareTextPayload,
+          });
+          if (showToast) showToast('Shared successfully!');
+          return;
+        } catch (err: any) {
+          if (err?.name === 'AbortError') return; // user cancelled the native share sheet
+          // otherwise fall through to the download + WhatsApp fallback below
+        }
+      }
+
+      // Fallback: download the PDF so it's ready on-device, then open WhatsApp with the text
+      const link = document.createElement('a');
+      link.href = pdf.url;
+      link.download = pdf.filename;
+      link.click();
+
+      const cleanPhone = contact.phone.replace(/[^0-9]/g, '');
+      window.open(`https://wa.me/${cleanPhone}?text=${encodeURIComponent(shareTextPayload)}`, '_blank');
+      if (showToast) showToast('PDF downloaded — opening WhatsApp');
+    } catch (err) {
+      console.error('Share receipt error:', err);
+      // Last resort if PDF generation itself fails: original text-only behavior
+      const cleanPhone = contact.phone.replace(/[^0-9]/g, '');
+      window.open(`https://wa.me/${cleanPhone}?text=${encodeURIComponent(shareTextPayload)}`, '_blank');
+      if (showToast) showToast('Receipt opened in WhatsApp');
+    } finally {
+      setIsSharing(false);
+    }
   };
 
   // Handle Download PDF
   const handleDownloadPdf = async () => {
     setIsGeneratingPdf(true);
     try {
-      const monthEntries = entries.filter(
-        (e) => e.contactId === contact.id && e.date.startsWith(activeMonthDisplay.substring(0, 7))
-      );
-
-      const pdf = await generateSawaaPdfDocument(
-        contact,
-        monthEntries.length > 0 ? monthEntries : entries.filter((e) => e.contactId === contact.id),
-        activeMonthDisplay,
-        businessSettings,
-        {
-          totalMilk: metrics.milk,
-          totalAmount: metrics.amount,
-          totalReceived: metrics.received,
-          periodDue: metrics.due,
-          previousDue: metrics.previousDue,
-          totalOutstanding: metrics.totalOutstanding,
-        }
-      );
+      const pdf = await buildReceiptPdf();
 
       // Trigger download
       const link = document.createElement('a');
@@ -410,11 +439,12 @@ export const CustomerShareReceiptModal: React.FC<CustomerShareReceiptModalProps>
           <button
             type="button"
             onClick={handleShare}
-            className="flex-1 py-2.5 px-3 bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-500 hover:to-emerald-600 active:from-emerald-700 active:to-emerald-800 text-white rounded-xl font-black text-xs shadow-md shadow-emerald-950/40 border border-emerald-400/30 flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+            disabled={isSharing}
+            className="flex-1 py-2.5 px-3 bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-500 hover:to-emerald-600 active:from-emerald-700 active:to-emerald-800 text-white rounded-xl font-black text-xs shadow-md shadow-emerald-950/40 border border-emerald-400/30 flex items-center justify-center gap-1.5 transition-all cursor-pointer disabled:opacity-60"
             title="Share via Sheet / WhatsApp"
           >
-            <Share2 className="w-3.5 h-3.5 stroke-[2.5]" />
-            <span>Share</span>
+            {isSharing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Share2 className="w-3.5 h-3.5 stroke-[2.5]" />}
+            <span>{isSharing ? 'Preparing...' : 'Share'}</span>
           </button>
 
           {/* 3. Download PDF Button */}

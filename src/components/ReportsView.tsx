@@ -103,6 +103,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   // 4. Chart visibility + PDF generation state
   const [showChart, setShowChart] = useState<boolean>(true);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState<boolean>(false);
+  const [isSharing, setIsSharing] = useState<boolean>(false);
 
   // Date/Period Navigation
   const handlePrevTime = () => {
@@ -316,7 +317,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   }, [sevenDayTrend]);
 
   // 12. Share & PDF Actions
-  const handleShare = () => {
+  const buildReportSummaryText = () => {
     const lines = [
       '*Dairy Diary — Report*',
       periodLabel,
@@ -327,55 +328,98 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       `Entries: ${metrics.count}`,
     ];
     if (metrics.due > 0) lines.push(`Outstanding Due: ${formatPKR(metrics.due)}`);
-    const waUrl = `https://wa.me/?text=${encodeURIComponent(lines.join('\n'))}`;
-    window.open(waUrl, '_blank');
+    return lines.join('\n');
+  };
+
+  // Shared PDF generation, reused by both the Share and PDF buttons so they always
+  // attach/download the exact same document.
+  const buildReportsPdfFile = async () => {
+    const pdfItems: ReportsPdfLineItem[] = unifiedItems.map((item) => {
+      if (item.kind === 'milk') {
+        return {
+          date: item.entry.date,
+          time: item.entry.timestamp,
+          typeLabel: 'Milk',
+          label: item.entry.contactName,
+          detail: `${item.entry.liters.toFixed(2)} L @ Rs${item.entry.ratePerLiter.toFixed(1)}/L`,
+          amount: item.entry.totalAmount,
+        };
+      }
+      if (item.kind === 'payment') {
+        return {
+          date: item.payment.date,
+          time: item.payment.timestamp,
+          typeLabel: 'Payment',
+          label: item.payment.contactName,
+          detail: item.payment.paymentMethod || 'Received',
+          amount: item.payment.amount,
+        };
+      }
+      return {
+        date: item.expense.date,
+        time: item.expense.time,
+        typeLabel: 'Expense',
+        label: item.expense.title,
+        detail: item.expense.paidTo || '',
+        amount: item.expense.amount,
+      };
+    });
+
+    return generateReportsPdf(
+      {
+        periodTitle: periodLabel,
+        milkLiters: metrics.milk,
+        buySellAmount: metrics.amount,
+        paidReceived: metrics.received,
+        entriesCount: metrics.count,
+        due: metrics.due,
+      },
+      pdfItems
+    );
+  };
+
+  // Share: generate the PDF report and attach it via the native share sheet (Web Share
+  // API Level 2). Falls back to downloading the PDF + opening WhatsApp with the text
+  // summary when file sharing isn't supported, and to text-only WhatsApp if PDF
+  // generation itself fails.
+  const handleShare = async () => {
+    setIsSharing(true);
+    const summaryText = buildReportSummaryText();
+    try {
+      const pdfRes = await buildReportsPdfFile();
+
+      if (navigator.share && navigator.canShare && navigator.canShare({ files: [pdfRes.file] })) {
+        try {
+          await navigator.share({
+            files: [pdfRes.file],
+            title: `Dairy Diary Report — ${periodLabel}`,
+            text: summaryText,
+          });
+          return;
+        } catch (err: any) {
+          if (err?.name === 'AbortError') return; // user cancelled the native share sheet
+          // otherwise fall through to the download + WhatsApp fallback below
+        }
+      }
+
+      const downloadLink = document.createElement('a');
+      downloadLink.href = pdfRes.url;
+      downloadLink.download = pdfRes.filename;
+      downloadLink.click();
+      window.open(`https://wa.me/?text=${encodeURIComponent(summaryText)}`, '_blank');
+    } catch (err) {
+      console.error('Reports share error:', err);
+      // Last resort if PDF generation itself fails: original text-only behavior
+      window.open(`https://wa.me/?text=${encodeURIComponent(summaryText)}`, '_blank');
+    } finally {
+      setIsSharing(false);
+    }
   };
 
   const handleGeneratePdf = async () => {
     setIsGeneratingPdf(true);
     try {
-      const pdfItems: ReportsPdfLineItem[] = unifiedItems.map((item) => {
-        if (item.kind === 'milk') {
-          return {
-            date: item.entry.date,
-            time: item.entry.timestamp,
-            typeLabel: 'Milk',
-            label: item.entry.contactName,
-            detail: `${item.entry.liters.toFixed(2)} L @ Rs${item.entry.ratePerLiter.toFixed(1)}/L`,
-            amount: item.entry.totalAmount,
-          };
-        }
-        if (item.kind === 'payment') {
-          return {
-            date: item.payment.date,
-            time: item.payment.timestamp,
-            typeLabel: 'Payment',
-            label: item.payment.contactName,
-            detail: item.payment.paymentMethod || 'Received',
-            amount: item.payment.amount,
-          };
-        }
-        return {
-          date: item.expense.date,
-          time: item.expense.time,
-          typeLabel: 'Expense',
-          label: item.expense.title,
-          detail: item.expense.paidTo || '',
-          amount: item.expense.amount,
-        };
-      });
-
-      const pdfRes = await generateReportsPdf(
-        {
-          periodTitle: periodLabel,
-          milkLiters: metrics.milk,
-          buySellAmount: metrics.amount,
-          paidReceived: metrics.received,
-          entriesCount: metrics.count,
-          due: metrics.due,
-        },
-        pdfItems
-      );
+      const pdfRes = await buildReportsPdfFile();
 
       const downloadLink = document.createElement('a');
       downloadLink.href = pdfRes.url;
@@ -712,10 +756,11 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
               <button
                 type="button"
                 onClick={handleShare}
-                className="flex items-center gap-1 px-3 py-2 rounded-full bg-[#E1F3EA] hover:bg-[#d6ecdf] active:bg-[#c9e4d5] text-[#0B8F68] border border-[#B8E0CC] text-xs font-bold transition-all cursor-pointer shrink-0"
-                title="Share report via WhatsApp"
+                disabled={isSharing}
+                className="flex items-center gap-1 px-3 py-2 rounded-full bg-[#E1F3EA] hover:bg-[#d6ecdf] active:bg-[#c9e4d5] text-[#0B8F68] border border-[#B8E0CC] text-xs font-bold transition-all cursor-pointer shrink-0 disabled:opacity-60"
+                title="Share report PDF"
               >
-                <Share2 className="w-3.5 h-3.5" />
+                {isSharing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Share2 className="w-3.5 h-3.5" />}
                 Share
               </button>
 

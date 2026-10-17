@@ -161,31 +161,57 @@ export const MonthlyBillingModal: React.FC<MonthlyBillingModalProps> = ({
         isPremium
       );
 
-      // 2. Download PDF file so user has it immediately available to attach
-      const downloadLink = document.createElement('a');
-      downloadLink.href = pdfRes.url;
-      downloadLink.download = pdfRes.filename;
-      document.body.appendChild(downloadLink);
-      downloadLink.click();
-      document.body.removeChild(downloadLink);
-
-      // 3. Prepare short WhatsApp message
+      // 2. Prepare short WhatsApp message
       const shortMsg = `Dear ${currentCustomer.name}, please find your monthly milk bill for ${activeMonthDisplay}.\n\nTotal Volume: ${totalMilk.toFixed(2)} Liters\nTotal Bill: Rs ${Math.round(totalAmount).toLocaleString('en-PK')}\nTotal Due: Rs ${Math.round(totalOutstanding).toLocaleString('en-PK')}\nPayment Due By: ${pdfRes.dueDateStr}\n\nThank you!\n- ${businessSettings?.businessName || 'Dairy Diary'}`;
 
-      // 4. Open WhatsApp directly with recipient and pre-filled message
-      const cleanPhone = getCleanPhoneNumber(currentCustomer.phone);
-      const waUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(shortMsg)}`;
-      window.open(waUrl, '_blank');
+      // 3. Prefer attaching the PDF directly via the native share sheet (Web Share API
+      // Level 2). Falls back to downloading the PDF + opening WhatsApp with the text
+      // when file sharing isn't supported.
+      let sharedViaFile = false;
+      if (navigator.share && navigator.canShare && navigator.canShare({ files: [pdfRes.file] })) {
+        try {
+          await navigator.share({
+            files: [pdfRes.file],
+            title: `Milk Bill — ${currentCustomer.name} — ${activeMonthDisplay}`,
+            text: shortMsg,
+          });
+          sharedViaFile = true;
+        } catch (err: any) {
+          if (err?.name === 'AbortError') {
+            // User cancelled the native share sheet — don't mark as billed or advance the queue.
+            setIsGenerating(false);
+            return;
+          }
+          // otherwise fall through to the download + WhatsApp fallback below
+        }
+      }
 
-      // 5. Mark customer as billed for current month
+      if (!sharedViaFile) {
+        const downloadLink = document.createElement('a');
+        downloadLink.href = pdfRes.url;
+        downloadLink.download = pdfRes.filename;
+        document.body.appendChild(downloadLink);
+        downloadLink.click();
+        document.body.removeChild(downloadLink);
+
+        const cleanPhone = getCleanPhoneNumber(currentCustomer.phone);
+        const waUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(shortMsg)}`;
+        window.open(waUrl, '_blank');
+      }
+
+      // 4. Mark customer as billed for current month
       onMarkCustomerBilled(currentCustomer.id, currentMonthKey);
       setSentCount((prev) => prev + 1);
 
       if (showToast) {
-        showToast(`Bill opened in WhatsApp for ${currentCustomer.name}`);
+        showToast(
+          sharedViaFile
+            ? `Bill shared for ${currentCustomer.name}`
+            : `Bill opened in WhatsApp for ${currentCustomer.name}`
+        );
       }
 
-      // 6. Move to next customer
+      // 5. Move to next customer
       if (currentIndex + 1 < pendingCustomers.length) {
         setCurrentIndex((prev) => prev + 1);
       } else {

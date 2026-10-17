@@ -29,6 +29,7 @@ import {
 import { Contact, LedgerEntry, ShiftType, MilkType, BusinessSettings, PaymentRecord } from '../types/dairy';
 import { formatPKR, formatLiters, getMonthDisplay, shiftMonthKey, generateWhatsAppMessage, getDeviceTodayDate, getDeviceCurrentMonthKey } from '../utils/formatters';
 import { getCustomerMonthDue } from '../utils/calculations';
+import { generateSawaaPdfDocument } from '../utils/pdfGenerator';
 import { EditCustomerScreen } from './EditCustomerScreen';
 import { ReportPeriodBottomSheet } from './ReportPeriodBottomSheet';
 import { EditEntryScreen } from './EditEntryScreen';
@@ -220,7 +221,30 @@ export const ContactDetailModal: React.FC<ContactDetailModalProps> = ({
     window.location.href = `tel:${contact.phone}`;
   };
 
-  const handleShareWhatsApp = () => {
+  // Shared current-month statement PDF, reused by the WhatsApp summary share and the
+  // Payment Reminder share so both attach the same document.
+  const buildStatementPdf = async () => {
+    return generateSawaaPdfDocument(
+      activeContact,
+      contactEntries,
+      activeMonthDisplay,
+      businessSettings,
+      {
+        totalMilk: metrics.milk,
+        totalAmount: metrics.amount,
+        totalReceived: metrics.received,
+        periodDue: metrics.due,
+        previousDue: metrics.previousDue,
+        totalOutstanding: metrics.totalOutstanding,
+      },
+      isPremium
+    );
+  };
+
+  // Share the customer's statement: attach the PDF via the native share sheet (Web Share
+  // API Level 2) when supported, falling back to downloading the PDF + opening WhatsApp
+  // with the text summary, and to text-only WhatsApp if PDF generation itself fails.
+  const handleShareWhatsApp = async () => {
     const msg = generateWhatsAppMessage(
       contact.name,
       contact.role,
@@ -229,13 +253,59 @@ export const ContactDetailModal: React.FC<ContactDetailModalProps> = ({
       metrics.milk,
       activeMonthDisplay
     );
-    window.open(`https://wa.me/${contact.phone.replace(/[^0-9]/g, '')}?text=${msg}`, '_blank');
+    try {
+      const pdf = await buildStatementPdf();
+      if (navigator.share && navigator.canShare && navigator.canShare({ files: [pdf.file] })) {
+        try {
+          await navigator.share({
+            files: [pdf.file],
+            title: `Milk Bill — ${contact.name} — ${activeMonthDisplay}`,
+            text: decodeURIComponent(msg),
+          });
+          return;
+        } catch (err: any) {
+          if (err?.name === 'AbortError') return;
+        }
+      }
+      const downloadLink = document.createElement('a');
+      downloadLink.href = pdf.url;
+      downloadLink.download = pdf.filename;
+      downloadLink.click();
+      window.open(`https://wa.me/${contact.phone.replace(/[^0-9]/g, '')}?text=${msg}`, '_blank');
+    } catch (err) {
+      console.error('Share statement error:', err);
+      window.open(`https://wa.me/${contact.phone.replace(/[^0-9]/g, '')}?text=${msg}`, '_blank');
+    }
   };
 
-  const handlePaymentReminder = () => {
+  const handlePaymentReminder = async () => {
     const text = `*Dairy Diary - Payment Reminder*\n\nDear *${contact.name}*,\nYour active milk bill for *${activeMonthDisplay}* is *${formatPKR(metrics.due)}*.\nIncludes previous balance: *${formatPKR(metrics.previousDue)}*.\n*Total Outstanding Due: ${formatPKR(metrics.totalOutstanding)}*.\n\nPlease clear your ledger account at your earliest convenience.\nAl-Madina Dairy Center · +92 301 5541290`;
-    window.open(`https://wa.me/${contact.phone.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(text)}`, '_blank');
-    triggerToast('Payment Reminder sent via WhatsApp');
+    try {
+      const pdf = await buildStatementPdf();
+      if (navigator.share && navigator.canShare && navigator.canShare({ files: [pdf.file] })) {
+        try {
+          await navigator.share({
+            files: [pdf.file],
+            title: `Payment Reminder — ${contact.name}`,
+            text,
+          });
+          triggerToast('Payment Reminder shared');
+          return;
+        } catch (err: any) {
+          if (err?.name === 'AbortError') return;
+        }
+      }
+      const downloadLink = document.createElement('a');
+      downloadLink.href = pdf.url;
+      downloadLink.download = pdf.filename;
+      downloadLink.click();
+      window.open(`https://wa.me/${contact.phone.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(text)}`, '_blank');
+      triggerToast('Payment Reminder sent via WhatsApp');
+    } catch (err) {
+      console.error('Payment reminder share error:', err);
+      window.open(`https://wa.me/${contact.phone.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(text)}`, '_blank');
+      triggerToast('Payment Reminder sent via WhatsApp');
+    }
   };
 
   const handleDownloadPDF = () => {
@@ -248,9 +318,46 @@ export const ContactDetailModal: React.FC<ContactDetailModalProps> = ({
     window.print();
   };
 
-  const handleShareRow = (entry: LedgerEntry) => {
+  // Single-entry receipt share: builds a one-off PDF for just this delivery.
+  const handleShareRow = async (entry: LedgerEntry) => {
     const text = `*Milk Receipt - Dairy Diary*\nDate: ${entry.date} | ${entry.timestamp}\nShift: ${entry.shift.toUpperCase()}\nQuantity: ${entry.liters} L @ Rs${entry.ratePerLiter}/L\nTotal: Rs${entry.totalAmount}\nCustomer: ${contact.name}`;
-    window.open(`https://wa.me/${contact.phone.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(text)}`, '_blank');
+    try {
+      const pdf = await generateSawaaPdfDocument(
+        activeContact,
+        [entry],
+        entry.date,
+        businessSettings,
+        {
+          totalMilk: entry.liters,
+          totalAmount: entry.totalAmount,
+          totalReceived: entry.receivedAmount,
+          periodDue: entry.dueAmount,
+          previousDue: 0,
+          totalOutstanding: entry.dueAmount,
+        },
+        isPremium
+      );
+      if (navigator.share && navigator.canShare && navigator.canShare({ files: [pdf.file] })) {
+        try {
+          await navigator.share({
+            files: [pdf.file],
+            title: `Milk Receipt — ${contact.name} — ${entry.date}`,
+            text,
+          });
+          return;
+        } catch (err: any) {
+          if (err?.name === 'AbortError') return;
+        }
+      }
+      const downloadLink = document.createElement('a');
+      downloadLink.href = pdf.url;
+      downloadLink.download = pdf.filename;
+      downloadLink.click();
+      window.open(`https://wa.me/${contact.phone.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(text)}`, '_blank');
+    } catch (err) {
+      console.error('Row receipt share error:', err);
+      window.open(`https://wa.me/${contact.phone.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(text)}`, '_blank');
+    }
   };
 
   const handleSavePayment = (data: {
