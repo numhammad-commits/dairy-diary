@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 240" width="800" height="240">
+  <!-- Droplet Mark -->
+  <g transform="translate(20, 10) scale(0.42)">
+    
+  <defs>
+    <linearGradient id="aPillar_transparent" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1B4332" />
+      <stop offset="100%" stop-color="#0F281E" />
+    </linearGradient>
+
+    <linearGradient id="aSwoosh_transparent" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#1B5E20" />
+      <stop offset="50%" stop-color="#2D6A4F" />
+      <stop offset="100%" stop-color="#34D399" />
+    </linearGradient>
+
+    <linearGradient id="aGloss_transparent" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.85" />
+      <stop offset="100%" stop-color="#A7F3D0" stop-opacity="0.2" />
+    </linearGradient>
+
+    <filter id="aShadow_transparent" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#051810" flood-opacity="0.2" />
+    </filter>
+  </defs>
+
+  
+
+  <!-- Left: The Solid Ledger Pillar (Grounded Stability & Bookkeeping Records) -->
+  <path d="M 256,48 C 218,135 116,238 116,338 C 116,420 178,464 252,464 C 218,460 174,424 174,342 C 174,262 226,162 256,48 Z"
+        fill="url(#aPillar_transparent)" filter="url(#aShadow_transparent)" />
+
+  <!-- Right: The Dynamic Milk Checkmark / Growth Swoosh (Fresh Dairy & Financial Accuracy) -->
+  <path d="M 194,366 C 226,408 250,432 268,432 C 326,432 396,386 396,322 C 396,242 328,152 256,48 C 298,156 342,242 342,312 C 342,352 298,382 252,364 C 230,355 210,354 194,366 Z"
+        fill="url(#aSwoosh_transparent)" filter="url(#aShadow_transparent)" />
+
+  <!-- Accent: The Golden Ledger Pip (Accounting Checkpoint / Cream Quality) -->
+  <circle cx="212" cy="386" r="14" fill="#F59E0B" opacity="0.95" />
+
+  <!-- Upper-Left Gloss Highlight (Fresh Morning Milk Specular Luster) -->
+  <path d="M 182,185 C 160,230 152,275 158,318 C 165,278 178,238 198,198 Z"
+        fill="url(#aGloss_transparent)" />
+
+  </g>
+
+  <!-- Typography -->
+  <text x="260" y="115" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="58" font-weight="900" fill="#1B4332" letter-spacing="-1">
+    Dairy Diary
+  </text>
+  <text x="262" y="158" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="22" font-weight="700" fill="#2D6A4F" letter-spacing="0.5">
+    MILK LEDGER &amp; BILLING
+  </text>
+  <rect x="262" y="180" width="240" height="4" rx="2" fill="#10B981" />
+</svg>

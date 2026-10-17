@@ -1,0 +1,7 @@
+{
+  "name": "Dairy Diary - Milk Ledger & Billing",
+  "description": "Professional mobile ledger, billing, and records management app for dairy farms and milk suppliers in Pakistan.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+

@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" rx="96" fill="#0C281E" />
+
+  <!-- Circular Financial Seal Ring -->
+  <circle cx="256" cy="256" r="210" fill="none" stroke="#FFFFFF" stroke-width="20" />
+  <circle cx="256" cy="256" r="185" fill="none" stroke="#FFFFFF" stroke-width="4" stroke-dasharray="12,12" />
+
+  <!-- Traditional Milk Canister Profile -->
+  <path d="M 220,130 L 292,130 L 292,160 L 326,200 L 326,350 C 326,365 314,375 300,375 L 212,375 C 198,375 186,365 186,350 L 186,200 L 220,160 Z"
+        fill="#34D399" />
+
+  <!-- Balance Equality Bars (Accounting Reconciliation) -->
+  <rect x="226" y="260" width="60" height="14" rx="7" fill="#FFFFFF" />
+  <rect x="226" y="290" width="60" height="14" rx="7" fill="#FFFFFF" />
+</svg>
