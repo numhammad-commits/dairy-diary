@@ -18,6 +18,11 @@ import {
   EyeOff,
   Loader2,
   ListChecks,
+  CheckCircle2,
+  ArrowUp,
+  ArrowDown,
+  ShoppingCart,
+  PieChart,
 } from 'lucide-react';
 import { Contact, LedgerEntry, ExpenseItem, PaymentRecord } from '../types/dairy';
 import {
@@ -98,6 +103,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   const [typeFilter, setTypeFilter] = useState<'all' | 'sell' | 'buy'>('all');
   const [shiftFilter, setShiftFilter] = useState<'all' | 'morning' | 'evening'>('all');
   const [itemTypeFilter, setItemTypeFilter] = useState<ItemTypeFilter>('all');
+  const [plFilter, setPlFilter] = useState<'all' | 'sell' | 'buy'>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
 
   // 4. Chart visibility + PDF generation state
@@ -124,6 +130,13 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       : timeFrame === 'monthly'
       ? getFullMonthDisplay(selectedMonth)
       : selectedYear;
+
+  const plPeriodBadgeLabel =
+    timeFrame === 'daily'
+      ? `Daily (${formatShortDay(selectedDate)})`
+      : timeFrame === 'monthly'
+      ? `Monthly (${periodLabel})`
+      : `Yearly (${periodLabel})`;
 
   // Does a raw YYYY-MM-DD date string fall within the currently selected period?
   const dateInPeriod = (dateStr: string): boolean => {
@@ -264,8 +277,30 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       .reduce((sum, e) => sum + e.totalAmount, 0);
     const expensesTotal = periodExpenses.reduce((sum, e) => sum + e.amount, 0);
     const netProfit = revenue - cost - expensesTotal;
-    return { revenue, cost, expensesTotal, netProfit };
+    const margin = revenue > 0 ? (netProfit / revenue) * 100 : 0;
+    return { revenue, cost, expensesTotal, netProfit, margin };
   }, [periodMilkEntriesForPL, periodExpenses]);
+
+  // Previous period's Net Profit (yesterday / last month / last year), for the "vs prev" badge.
+  const prevPeriodNetProfit = useMemo(() => {
+    let matchFn: (d: string) => boolean;
+    if (timeFrame === 'daily') {
+      const prevDate = shiftDateString(selectedDate, -1);
+      matchFn = (d) => d === prevDate;
+    } else if (timeFrame === 'monthly') {
+      const prevMonth = shiftMonthKey(selectedMonth, -1);
+      matchFn = (d) => d.startsWith(prevMonth);
+    } else {
+      const prevYear = String(parseInt(selectedYear, 10) - 1);
+      matchFn = (d) => d.startsWith(prevYear);
+    }
+    const prevEntries = entries.filter((e) => matchFn(e.date) && (shiftFilter === 'all' || e.shift === shiftFilter));
+    const prevExpenses = expenses.filter((ex) => matchFn(ex.date));
+    const revenue = prevEntries.filter((e) => e.contactRole === 'buyer').reduce((s, e) => s + e.totalAmount, 0);
+    const cost = prevEntries.filter((e) => e.contactRole === 'seller').reduce((s, e) => s + e.totalAmount, 0);
+    const expensesTotal = prevExpenses.reduce((s, e) => s + e.amount, 0);
+    return revenue - cost - expensesTotal;
+  }, [entries, expenses, timeFrame, selectedDate, selectedMonth, selectedYear, shiftFilter]);
 
   // 10. Unified Entry List: Milk + Payment + Expense, filtered by Item Type and search, newest first
   const unifiedItems = useMemo(() => {
@@ -328,6 +363,29 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
     const max = Math.max(0, ...vals);
     return max > 0 ? max : 1;
   }, [sevenDayTrend]);
+
+  // 7-Day Financial Trend (Profit & Loss tab only) — Sell / Buy / Expenses per day.
+  const financialTrendPL = useMemo(() => {
+    const today = getDeviceTodayDate();
+    const days: { date: string; label: string; buy: number; sell: number; exp: number }[] = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = shiftDateString(today, -i);
+      const dayEntries = entries.filter((e) => e.date === d);
+      const buy = dayEntries.filter((e) => e.contactRole === 'seller').reduce((s, e) => s + e.totalAmount, 0);
+      const sell = dayEntries.filter((e) => e.contactRole === 'buyer').reduce((s, e) => s + e.totalAmount, 0);
+      const exp = expenses.filter((ex) => ex.date === d).reduce((s, ex) => s + ex.amount, 0);
+      days.push({ date: d, label: formatShortDay(d), buy, sell, exp });
+    }
+    return days;
+  }, [entries, expenses]);
+
+  const financialTrendMax = useMemo(() => {
+    const vals = financialTrendPL.flatMap((d) => [d.buy, d.sell, d.exp]);
+    const max = Math.max(0, ...vals);
+    return max > 0 ? max : 1;
+  }, [financialTrendPL]);
+
+  const netProfitVsPrev = plMetrics.netProfit - prevPeriodNetProfit;
 
   // 12. Share & PDF Actions
   const buildReportSummaryText = () => {
@@ -645,48 +703,120 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
           </>
         ) : (
           /* Profit & Loss Panel */
-          <div className="space-y-2">
+          <div className="space-y-2.5">
+            {/* Filter Pills: All / Sales (Sell) / Purchases (Buy) */}
             <div className="grid grid-cols-3 gap-2">
-              <div className="glass-card rounded-2xl p-2.5 text-center border border-[#D6E9E1] shadow-xs flex flex-col items-center justify-center">
-                <span className="text-[10px] font-semibold text-[#55756D] uppercase tracking-wider">Revenue</span>
-                <span className="text-xs sm:text-sm font-black text-[#0B9B72] tracking-tight leading-none mt-1">
-                  Rs{Math.round(plMetrics.revenue).toLocaleString()}
-                </span>
-              </div>
-              <div className="glass-card rounded-2xl p-2.5 text-center border border-[#D6E9E1] shadow-xs flex flex-col items-center justify-center">
-                <span className="text-[10px] font-semibold text-[#55756D] uppercase tracking-wider">Cost</span>
-                <span className="text-xs sm:text-sm font-black text-amber-700 tracking-tight leading-none mt-1">
-                  Rs{Math.round(plMetrics.cost).toLocaleString()}
-                </span>
-              </div>
-              <div className="glass-card rounded-2xl p-2.5 text-center border border-[#D6E9E1] shadow-xs flex flex-col items-center justify-center">
-                <span className="text-[10px] font-semibold text-[#55756D] uppercase tracking-wider">Expenses</span>
-                <span className="text-xs sm:text-sm font-black text-[#E5485D] tracking-tight leading-none mt-1">
-                  Rs{Math.round(plMetrics.expensesTotal).toLocaleString()}
-                </span>
-              </div>
+              {(['all', 'sell', 'buy'] as const).map((f) => {
+                const cfg = {
+                  all: { label: 'All', Icon: PieChart, bg: 'bg-[#E9F3FF]', border: 'border-[#1597E5]', text: 'text-[#1597E5]' },
+                  sell: { label: 'Sales (Sell)', Icon: ArrowUp, bg: 'bg-[#E1F3EA]', border: 'border-[#0B8F68]', text: 'text-[#0B8F68]' },
+                  buy: { label: 'Purchases (Buy)', Icon: ShoppingCart, bg: 'bg-amber-50', border: 'border-amber-500', text: 'text-amber-700' },
+                }[f];
+                const Icon = cfg.Icon;
+                const active = plFilter === f;
+                return (
+                  <button
+                    key={f}
+                    type="button"
+                    onClick={() => setPlFilter(f)}
+                    className={`flex items-center justify-center gap-1 py-2 px-1.5 rounded-full border text-[10px] sm:text-[11px] font-bold transition-all cursor-pointer whitespace-nowrap ${
+                      active ? `${cfg.bg} ${cfg.border} ${cfg.text}` : 'bg-white border-[#D6E9E1] text-[#55756D]'
+                    }`}
+                  >
+                    <Icon className="w-3.5 h-3.5 shrink-0" />
+                    {cfg.label}
+                  </button>
+                );
+              })}
             </div>
 
+            {/* Net Profit Card */}
             <div
-              className={`rounded-2xl p-4 border shadow-xs flex items-center justify-between ${
-                plMetrics.netProfit >= 0
-                  ? 'bg-[#E1F3EA] border-[#B8E0CC]'
-                  : 'bg-rose-50 border-rose-200'
+              className={`rounded-2xl p-4 border shadow-xs ${
+                plMetrics.netProfit >= 0 ? 'bg-[#E1F3EA] border-[#B8E0CC]' : 'bg-rose-50 border-rose-200'
               }`}
             >
-              <div>
-                <span className="text-[11px] font-bold uppercase tracking-wider text-[#55756D] block">
-                  Net Profit ({periodLabel})
+              <div className="flex items-center justify-between mb-2">
+                <span className="px-2.5 py-1 rounded-full bg-white/70 border border-[#D6E9E1] text-[10px] font-bold text-[#163B32]">
+                  {plPeriodBadgeLabel}
                 </span>
-                <span className="text-[10px] text-[#55756D]">Revenue − Cost − Expenses</span>
+                <span
+                  className={`flex items-center gap-1 px-2.5 py-1 rounded-full border text-[10px] font-black ${
+                    plMetrics.netProfit >= 0
+                      ? 'bg-white border-[#0B8F68] text-[#0B8F68]'
+                      : 'bg-white border-[#E5485D] text-[#E5485D]'
+                  }`}
+                >
+                  <CheckCircle2 className="w-3 h-3" />
+                  {plMetrics.netProfit >= 0 ? 'NET PROFIT' : 'NET LOSS'}
+                </span>
               </div>
-              <span
-                className={`text-xl font-black tracking-tight ${
-                  plMetrics.netProfit >= 0 ? 'text-[#0B8F68]' : 'text-[#E5485D]'
-                }`}
-              >
-                Rs{Math.round(plMetrics.netProfit).toLocaleString()}
-              </span>
+
+              <div className="text-center py-1">
+                <span
+                  className={`block text-[11px] font-black uppercase tracking-wider ${
+                    plMetrics.netProfit >= 0 ? 'text-[#0B8F68]' : 'text-[#E5485D]'
+                  }`}
+                >
+                  Total Net Profit
+                </span>
+                <span
+                  className={`block text-3xl font-black tracking-tight mt-1 ${
+                    plMetrics.netProfit >= 0 ? 'text-[#0B8F68]' : 'text-[#E5485D]'
+                  }`}
+                >
+                  {plMetrics.netProfit >= 0 ? '+' : '-'}Rs{Math.abs(Math.round(plMetrics.netProfit)).toLocaleString()}
+                </span>
+
+                <div className="flex items-center justify-center gap-2 mt-2 flex-wrap">
+                  <span className="px-2.5 py-0.5 rounded-full bg-white/70 border border-[#B8E0CC] text-[10px] font-bold text-[#0B8F68]">
+                    Profit Margin: {plMetrics.margin.toFixed(1)}%
+                  </span>
+                  <span className="flex items-center gap-0.5 text-[10px] font-bold text-[#55756D]">
+                    {netProfitVsPrev >= 0 ? (
+                      <ArrowUp className="w-3 h-3 text-[#0B8F68]" />
+                    ) : (
+                      <ArrowDown className="w-3 h-3 text-[#E5485D]" />
+                    )}
+                    Rs{Math.abs(Math.round(netProfitVsPrev)).toLocaleString()} vs prev
+                  </span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2 mt-3">
+                <div
+                  className={`rounded-xl p-2 text-center bg-white/60 border ${
+                    plFilter === 'sell' ? 'border-[#0B8F68] ring-1 ring-[#0B8F68]' : 'border-transparent'
+                  }`}
+                >
+                  <span className="flex items-center justify-center gap-1 text-[10px] font-bold text-[#0B8F68]">
+                    <ArrowUp className="w-3 h-3" /> Sales (Sell)
+                  </span>
+                  <span className="block text-xs sm:text-sm font-black text-[#0B8F68] mt-1">
+                    +Rs{Math.round(plMetrics.revenue).toLocaleString()}
+                  </span>
+                </div>
+                <div
+                  className={`rounded-xl p-2 text-center bg-white/60 border ${
+                    plFilter === 'buy' ? 'border-amber-500 ring-1 ring-amber-500' : 'border-transparent'
+                  }`}
+                >
+                  <span className="flex items-center justify-center gap-1 text-[10px] font-bold text-amber-700">
+                    <ShoppingCart className="w-3 h-3" /> Purchases (Buy)
+                  </span>
+                  <span className="block text-xs sm:text-sm font-black text-amber-700 mt-1">
+                    -Rs{Math.round(plMetrics.cost).toLocaleString()}
+                  </span>
+                </div>
+                <div className="rounded-xl p-2 text-center bg-white/60 border border-transparent">
+                  <span className="flex items-center justify-center gap-1 text-[10px] font-bold text-[#E5485D]">
+                    <ArrowDown className="w-3 h-3" /> Expenses
+                  </span>
+                  <span className="block text-xs sm:text-sm font-black text-[#E5485D] mt-1">
+                    -Rs{Math.round(plMetrics.expensesTotal).toLocaleString()}
+                  </span>
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -926,6 +1056,74 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
               )}
             </div>
           </>
+        )}
+
+        {activeMode === 'profit_loss' && (
+          <div className="glass-card rounded-2xl p-3.5 border border-[#D6E9E1] shadow-xs mb-3 shrink-0">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-xs font-black text-[#163B32] flex items-center gap-1.5">
+                📊 Financial Trend ({financialTrendPL[0].label} - {financialTrendPL[6].label})
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowChart((s) => !s)}
+                className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-slate-100 hover:bg-slate-200 text-[#55756D] text-[10px] font-bold transition-colors cursor-pointer"
+              >
+                {showChart ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                {showChart ? 'Hide' : 'Show'}
+              </button>
+            </div>
+
+            {showChart && (
+              <>
+                <div className="flex items-center gap-3 text-[11px] font-bold mb-2 flex-wrap">
+                  <span className="flex items-center gap-1 text-[#1597E5]">
+                    <span className="w-2 h-2 rounded-full bg-[#1597E5] inline-block" /> Sell
+                  </span>
+                  <span className="flex items-center gap-1 text-amber-600">
+                    <span className="w-2 h-2 rounded-full bg-amber-500 inline-block" /> Buy
+                  </span>
+                  <span className="flex items-center gap-1 text-[#E5485D]">
+                    <span className="w-2 h-2 rounded-full bg-[#E5485D] inline-block" /> Exp
+                  </span>
+                </div>
+
+                <div className="h-28 flex items-end gap-1.5 px-0.5">
+                  {financialTrendPL.map((d) => {
+                    const sellPct = plFilter === 'buy' ? 0 : Math.max(d.sell > 0 ? 6 : 0, (d.sell / financialTrendMax) * 100);
+                    const buyPct = plFilter === 'sell' ? 0 : Math.max(d.buy > 0 ? 6 : 0, (d.buy / financialTrendMax) * 100);
+                    const expPct = Math.max(d.exp > 0 ? 6 : 0, (d.exp / financialTrendMax) * 100);
+                    return (
+                      <div key={d.date} className="flex-1 flex flex-col items-center justify-end h-full">
+                        <div className="flex items-end gap-0.5 h-full w-full justify-center">
+                          {plFilter !== 'buy' && (
+                            <div
+                              style={{ height: `${sellPct}%` }}
+                              className="w-2 sm:w-2.5 rounded-t bg-[#1597E5] transition-all"
+                              title={`Sell: Rs${Math.round(d.sell).toLocaleString()}`}
+                            />
+                          )}
+                          {plFilter !== 'sell' && (
+                            <div
+                              style={{ height: `${buyPct}%` }}
+                              className="w-2 sm:w-2.5 rounded-t bg-amber-500 transition-all"
+                              title={`Buy: Rs${Math.round(d.buy).toLocaleString()}`}
+                            />
+                          )}
+                          <div
+                            style={{ height: `${expPct}%` }}
+                            className="w-2 sm:w-2.5 rounded-t bg-[#E5485D] transition-all"
+                            title={`Expenses: Rs${Math.round(d.exp).toLocaleString()}`}
+                          />
+                        </div>
+                        <span className="text-[9px] text-[#55756D] font-bold mt-1 whitespace-nowrap">{d.label}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+          </div>
         )}
       </div>
     </div>
