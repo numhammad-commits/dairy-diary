@@ -12,3 +12,6 @@ dairy-diary-backup*.json
 
 # Source snapshot zip - redundant once this repo is the source of truth
 dairy-diary-source.zip
+
+# Removed from GitHub by request - don't let a local copy get re-added
+bun.lock
