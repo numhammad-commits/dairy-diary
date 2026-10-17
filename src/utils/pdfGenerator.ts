@@ -1,5 +1,6 @@
 import { jsPDF } from 'jspdf';
 import { Contact, LedgerEntry, BusinessSettings } from '../types/dairy';
+import { getEnabledPaymentAccounts } from './paymentAccounts';
 
 export interface GeneratedPdfResult {
   blob: Blob;
@@ -28,20 +29,9 @@ function drawPinIcon(doc: jsPDF, x: number, y: number, color: [number, number, n
   doc.triangle(x + 0.1, y + 2.0, x + 2.5, y + 2.0, x + 1.3, y + 4.6, 'F');
 }
 
-function drawHeartIcon(doc: jsPDF, cx: number, cy: number, size: number, color: [number, number, number]) {
-  const r = size / 2;
-  doc.setFillColor(color[0], color[1], color[2]);
-  doc.circle(cx - r * 0.5, cy - r * 0.3, r * 0.55, 'F');
-  doc.circle(cx + r * 0.5, cy - r * 0.3, r * 0.55, 'F');
-  doc.triangle(cx - r, cy - r * 0.1, cx + r, cy - r * 0.1, cx, cy + r, 'F');
-}
-
 // =========================================================================
-// Days Taken / Days Missed — a new display-only metric computed straight from
-// the raw entries array (never touches calculations.ts or any due/amount math).
-// For a plain "Month YYYY" statement, the full calendar month is used; for any
-// other period title (3-month/yearly/custom-range callers), the actual date
-// span covered by the entries themselves is used instead.
+// Month-title parsing — used to derive a stable YYYYMM suffix for the
+// generated Bill Number below from a "Month YYYY" period title.
 // =========================================================================
 
 function tryParseMonthTitle(title: string): { year: number; month: number } | null {
@@ -53,59 +43,11 @@ function tryParseMonthTitle(title: string): { year: number; month: number } | nu
   return { year: parseInt(match[2], 10), month: monthIdx + 1 };
 }
 
-function computeDeliveryDayStats(entries: LedgerEntry[], periodTitle: string): { daysTaken: number; missedDaysLabel: string } {
-  if (entries.length === 0) {
-    return { daysTaken: 0, missedDaysLabel: 'None' };
-  }
-
-  const takenDates = Array.from(new Set(entries.map((e) => e.date))).sort();
-  const daysTaken = takenDates.length;
-
-  let rangeStart: Date;
-  let rangeEnd: Date;
-
-  const monthMatch = tryParseMonthTitle(periodTitle);
-  if (monthMatch) {
-    rangeStart = new Date(monthMatch.year, monthMatch.month - 1, 1);
-    rangeEnd = new Date(monthMatch.year, monthMatch.month, 0);
-  } else {
-    const [fy, fm, fd] = takenDates[0].split('-').map(Number);
-    const [ly, lm, ld] = takenDates[takenDates.length - 1].split('-').map(Number);
-    rangeStart = new Date(fy, fm - 1, fd);
-    rangeEnd = new Date(ly, lm - 1, ld);
-  }
-
-  const takenSet = new Set(takenDates);
-  const missedDayNumbers: number[] = [];
-  const cursor = new Date(rangeStart);
-  while (cursor <= rangeEnd) {
-    const y = cursor.getFullYear();
-    const m = String(cursor.getMonth() + 1).padStart(2, '0');
-    const d = String(cursor.getDate()).padStart(2, '0');
-    if (!takenSet.has(`${y}-${m}-${d}`)) {
-      missedDayNumbers.push(cursor.getDate());
-    }
-    cursor.setDate(cursor.getDate() + 1);
-  }
-
-  let missedDaysLabel: string;
-  if (missedDayNumbers.length === 0) {
-    missedDaysLabel = 'None';
-  } else if (missedDayNumbers.length > 8) {
-    missedDaysLabel = `${missedDayNumbers.slice(0, 6).join(', ')} +${missedDayNumbers.length - 6} more`;
-  } else {
-    missedDaysLabel = missedDayNumbers.join(', ');
-  }
-
-  return { daysTaken, missedDaysLabel };
-}
-
 // =========================================================================
-// CUSTOMER STATEMENT PDF — clean, modern summary-statement design (blue header,
-// billed-to card, 2-column details grid, total bill + balance boxes, friendly
-// footer). Replaces the previous formal itemized-bill layout; the QR/payment
-// accounts section, line-item transaction table, and 7-day payment notice were
-// intentionally dropped since the new reference is a pure summary statement.
+// CUSTOMER STATEMENT PDF — the long formal itemized bill: green header, bill
+// number + due-date card, 4 summary stat boxes, carryover reconciliation bar,
+// paginated transaction ledger table, payment accounts + QR, 7-day payment
+// notice, and dual signature lines.
 // =========================================================================
 
 export async function generateSawaaPdfDocument(
@@ -148,20 +90,16 @@ export async function generateSawaaPdfDocument(
   const periodDue = financials?.periodDue ?? (totalAmount - totalReceived);
   const previousDue = financials?.previousDue ?? 0;
   const totalOutstanding = financials?.totalOutstanding ?? (periodDue + previousDue);
-  const avgRate = totalMilk > 0 ? totalAmount / totalMilk : 0;
 
-  // Dates: Bill Generated Today + 7 Days Payment Due (still returned for callers like
-  // ReportPeriodBottomSheet that display these alongside the PDF, even though the new
-  // design itself doesn't print a bill number/due-date line)
+  // Dates: Bill Generated Today + 7 Days Payment Due (also returned for callers like
+  // ReportPeriodBottomSheet that display these alongside the PDF)
   const now = new Date();
   const billDateStr = now.toLocaleDateString('en-US', { day: '2-digit', month: 'short', year: 'numeric' });
   const dueDate = new Date();
   dueDate.setDate(dueDate.getDate() + 7);
   const dueDateStr = dueDate.toLocaleDateString('en-US', { day: '2-digit', month: 'short', year: 'numeric' });
 
-  const { daysTaken, missedDaysLabel } = computeDeliveryDayStats(entries, periodTitle);
-
-  // Unobtrusive free-tier notice, kept out of the way of the new minimal layout
+  // Unobtrusive free-tier notice
   if (!isPremium) {
     doc.setTextColor(226, 232, 240);
     doc.setFont('helvetica', 'bold');
@@ -169,15 +107,38 @@ export async function generateSawaaPdfDocument(
     doc.text('DAIRY DIARY · UPGRADE TO PREMIUM TO REMOVE THIS NOTICE', pageWidth / 2, pageHeight - 5, { align: 'center' });
   }
 
+  // Stable-looking Bill Number: timestamp + the period's YYYYMM (or today's, for
+  // non-month period titles like "Last 3 Months" / "All Time History").
+  const billMonthMatch = tryParseMonthTitle(periodTitle);
+  const billMonthKey = billMonthMatch
+    ? `${billMonthMatch.year}${String(billMonthMatch.month).padStart(2, '0')}`
+    : `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const billNumber = `BILL-${now.getTime()}-${billMonthKey}`;
+
+  const GREEN: [number, number, number] = [30, 86, 49]; // #1E5631 — app brand green
+  const GREEN_LIGHT: [number, number, number] = [209, 250, 229];
+  const RED: [number, number, number] = [185, 28, 28];
+  const GREEN_DARK_TEXT: [number, number, number] = [21, 128, 61];
+
+  let yPos = 0;
+
+  const checkPageBreak = (neededHeight: number) => {
+    if (yPos + neededHeight > pageHeight - 20) {
+      doc.addPage();
+      yPos = 16;
+    }
+  };
+
   // =========================================================================
-  // 1. HEADER: Blue card (#1E3A8A) with logo, business name, phone, address
+  // 1. HEADER: Green banner (#1E5631) with logo, business name, phone,
+  // address, and generation date.
   // =========================================================================
   const headerY = 12;
-  const headerH = 46;
-  doc.setFillColor(30, 58, 138);
-  doc.roundedRect(margin, headerY, contentWidth, headerH, 6, 6, 'F');
+  const headerH = companyLocation || companyPhone ? 40 : 30;
+  doc.setFillColor(...GREEN);
+  doc.roundedRect(margin, headerY, contentWidth, headerH, 4, 4, 'F');
 
-  const logoCX = margin + 14;
+  const logoCX = margin + 13;
   const logoCY = headerY + 14;
   const logoR = 9;
   doc.setFillColor(255, 255, 255);
@@ -195,180 +156,359 @@ export async function generateSawaaPdfDocument(
     }
   }
   if (!logoDrawn) {
-    doc.setFillColor(30, 58, 138);
+    doc.setFillColor(...GREEN);
     doc.circle(logoCX, logoCY + 1, logoR - 3.5, 'F');
-    doc.setFillColor(96, 165, 250);
+    doc.setFillColor(110, 231, 183);
     doc.circle(logoCX + 2, logoCY - 0.5, logoR - 5, 'F');
   }
 
   doc.setTextColor(255, 255, 255);
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(18);
-  doc.text(companyName.toUpperCase(), margin + 28, headerY + 17);
+  doc.setFontSize(16);
+  doc.text(companyName.toUpperCase(), margin + 26, headerY + 15);
 
+  let headerRowY = headerY + 24;
   if (companyPhone) {
-    const rowY = headerY + 27;
-    drawPhoneIcon(doc, margin + 4, rowY - 3.2, [219, 234, 254]);
-    doc.setTextColor(219, 234, 254);
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(9.5);
-    doc.text(companyPhone, margin + 9, rowY);
-  }
-
-  if (companyLocation) {
-    const rowY = headerY + 35;
-    drawPinIcon(doc, margin + 4, rowY - 3.6, [219, 234, 254]);
-    doc.setTextColor(219, 234, 254);
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(9.5);
-    doc.text(companyLocation, margin + 9, rowY);
-  }
-
-  let yPos = headerY + headerH + 10;
-
-  // =========================================================================
-  // 2. BILLED TO + STATEMENT pill
-  // =========================================================================
-  doc.setTextColor(148, 163, 184);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(7.5);
-  doc.text('BILLED TO', margin, yPos);
-
-  doc.setTextColor(17, 24, 39);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(14);
-  doc.text(contact.name, margin, yPos + 7);
-
-  if (contact.address) {
-    doc.setTextColor(107, 114, 128);
+    drawPhoneIcon(doc, margin + 4, headerRowY - 3.2, GREEN_LIGHT);
+    doc.setTextColor(...GREEN_LIGHT);
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(9);
-    doc.text(contact.address, margin, yPos + 13);
+    doc.text(`Phone: ${companyPhone}`, margin + 11, headerRowY);
+    headerRowY += 7;
   }
-
-  const pillW = 48;
-  const pillH = 8;
-  const pillX = pageWidth - margin - pillW;
-  doc.setFillColor(219, 234, 254);
-  doc.roundedRect(pillX, yPos - 6, pillW, pillH, 3, 3, 'F');
-  doc.setTextColor(30, 64, 175);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(7);
-  doc.text('STATEMENT', pillX + pillW / 2, yPos - 1, { align: 'center' });
-
-  doc.setTextColor(30, 58, 138);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(11);
-  doc.text(periodTitle, pillX + pillW, yPos + 7, { align: 'right' });
-
-  yPos += 20;
-
-  // Dashed separator helper (same technique as the signature lines in the old design)
-  const drawDashedLine = (y: number) => {
-    doc.setDrawColor(203, 213, 225);
-    doc.setLineDashPattern([1.5, 1.5], 0);
-    doc.line(margin, y, pageWidth - margin, y);
-    doc.setLineDashPattern([], 0);
-  };
-  drawDashedLine(yPos);
-  yPos += 8;
-
-  // =========================================================================
-  // 3. Details grid (2 columns)
-  // =========================================================================
-  const colLeftX = margin;
-  const colRightX = margin + contentWidth / 2;
-  const rowH = 14;
-
-  const drawGridRow = (leftLabel: string, leftValue: string, rightLabel: string, rightValue: string, rowY: number) => {
-    doc.setTextColor(107, 114, 128);
+  if (companyLocation) {
+    drawPinIcon(doc, margin + 4, headerRowY - 3.6, GREEN_LIGHT);
+    doc.setTextColor(...GREEN_LIGHT);
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(8);
-    doc.text(leftLabel, colLeftX, rowY);
-    if (rightLabel) doc.text(rightLabel, colRightX, rowY);
-
-    doc.setTextColor(17, 24, 39);
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(11.5);
-    doc.text(leftValue, colLeftX, rowY + 6);
-    if (rightValue) doc.text(rightValue, colRightX, rowY + 6);
-  };
-
-  drawGridRow('Total Milk', `${totalMilk.toFixed(2)} L`, 'Rate', `${currSym}${avgRate.toFixed(0)} / L`, yPos);
-  yPos += rowH;
-  drawGridRow('Days Taken', `${daysTaken} Day${daysTaken === 1 ? '' : 's'}`, 'Days Missed', missedDaysLabel, yPos);
-  yPos += rowH;
-  drawGridRow('Total Amount', `${currSym}${Math.round(totalAmount).toLocaleString()}`, 'Received', `${currSym}${Math.round(totalReceived).toLocaleString()}`, yPos);
-  yPos += rowH;
-
-  // Only shown when there's a real carryover balance, keeping the common zero-previous-due
-  // case visually identical to the reference's exact 3-row grid.
-  if (previousDue > 0) {
-    drawGridRow('Previous Balance', `${currSym}${Math.round(previousDue).toLocaleString()}`, '', '', yPos);
-    yPos += rowH;
+    doc.setFontSize(9);
+    doc.text(companyLocation, margin + 11, headerRowY);
   }
 
-  yPos -= 4;
-  drawDashedLine(yPos);
-  yPos += 10;
-
-  // =========================================================================
-  // 4. Total Bill box
-  // =========================================================================
-  const boxH = 16;
-  doc.setFillColor(243, 244, 246);
-  doc.roundedRect(margin, yPos, contentWidth, boxH, 3, 3, 'F');
-  doc.setTextColor(30, 58, 138);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(10);
-  doc.text('TOTAL BILL', margin + 6, yPos + boxH / 2 + 2);
-  doc.setFontSize(18);
-  doc.text(`${currSym}${Math.round(totalAmount).toLocaleString()}`, pageWidth - margin - 6, yPos + boxH / 2 + 2.5, { align: 'right' });
-  yPos += boxH + 5;
-
-  // =========================================================================
-  // 5. Balance box — green "All Clear" when fully paid, red "Balance Due" otherwise.
-  // Uses totalOutstanding (period due + previous due) as the authoritative "what's
-  // still owed" figure, consistent with how the rest of the app treats it.
-  // =========================================================================
-  const isAllClear = totalOutstanding <= 0;
-  if (isAllClear) {
-    doc.setFillColor(220, 252, 231);
-  } else {
-    doc.setFillColor(254, 226, 226);
-  }
-  doc.roundedRect(margin, yPos, contentWidth, boxH, 3, 3, 'F');
-  if (isAllClear) {
-    doc.setTextColor(21, 128, 61);
-  } else {
-    doc.setTextColor(185, 28, 28);
-  }
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(10);
-  doc.text(isAllClear ? 'Balance (All Clear)' : 'Balance Due', margin + 6, yPos + boxH / 2 + 2);
-  doc.setFontSize(14);
-  doc.text(`${currSym}${Math.round(totalOutstanding).toLocaleString()}`, pageWidth - margin - 6, yPos + boxH / 2 + 2.5, { align: 'right' });
-  yPos += boxH + 14;
-
-  // =========================================================================
-  // 6. Footer
-  // =========================================================================
-  drawHeartIcon(doc, pageWidth / 2, yPos, 4, [239, 68, 68]);
-  yPos += 8;
-  doc.setTextColor(17, 24, 39);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(10);
-  doc.text('Thank you for your business!', pageWidth / 2, yPos, { align: 'center' });
-  yPos += 6;
-  doc.setTextColor(107, 114, 128);
+  doc.setTextColor(255, 255, 255);
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8.5);
-  doc.text('Have a wonderful day.', pageWidth / 2, yPos, { align: 'center' });
+  doc.text(`Date: ${billDateStr}`, pageWidth - margin - 4, headerY + 15, { align: 'right' });
+
+  yPos = headerY + headerH + 10;
+
+  // =========================================================================
+  // 2. "MONTHLY FRESH MILK BILL" title + period
+  // =========================================================================
+  doc.setTextColor(...GREEN);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(13);
+  doc.text('MONTHLY FRESH MILK BILL', margin, yPos);
+  doc.setFontSize(9);
+  doc.text(`Period: ${periodTitle}`, pageWidth - margin, yPos, { align: 'right' });
   yPos += 8;
-  doc.setTextColor(156, 163, 175);
-  doc.setFont('helvetica', 'italic');
+
+  // =========================================================================
+  // 3. Customer Information + Billing Information boxes (side by side)
+  // =========================================================================
+  const infoBoxW = (contentWidth - 6) / 2;
+  const infoBoxH = 28;
+  doc.setDrawColor(226, 232, 240);
+  doc.roundedRect(margin, yPos, infoBoxW, infoBoxH, 3, 3, 'S');
+  doc.roundedRect(margin + infoBoxW + 6, yPos, infoBoxW, infoBoxH, 3, 3, 'S');
+
+  const labelStyle = () => {
+    doc.setTextColor(148, 163, 184);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7);
+  };
+  const valueStyle = () => {
+    doc.setTextColor(17, 24, 39);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10.5);
+  };
+  const smallValueStyle = () => {
+    doc.setTextColor(71, 85, 105);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8.5);
+  };
+
+  labelStyle();
+  doc.text('CUSTOMER INFORMATION', margin + 4, yPos + 6);
+  valueStyle();
+  doc.text(contact.name, margin + 4, yPos + 13);
+  smallValueStyle();
+  doc.text(`Phone: ${contact.phone || 'N/A'}`, margin + 4, yPos + 19);
+  doc.text(`Address: ${contact.address || 'N/A'}`, margin + 4, yPos + 25);
+
+  const billColX = margin + infoBoxW + 6 + 4;
+  labelStyle();
+  doc.text('BILLING INFORMATION', billColX, yPos + 6);
+  smallValueStyle();
+  doc.text(`Bill Number: ${billNumber}`, billColX, yPos + 13);
+  doc.text(`Bill Date: ${billDateStr}`, billColX, yPos + 19);
+  doc.setTextColor(...RED);
+  doc.setFont('helvetica', 'bold');
+  doc.text(`Payment Due By: ${dueDateStr}`, billColX, yPos + 25);
+
+  yPos += infoBoxH + 6;
+
+  // =========================================================================
+  // 4. 4 Summary stat boxes
+  // =========================================================================
+  const statBoxW = (contentWidth - 9) / 4;
+  const statBoxH = 17;
+  const statBoxes: { label: string; value: string; fg: [number, number, number] }[] = [
+    { label: 'TOTAL MILK', value: `${totalMilk.toFixed(2)} L`, fg: [17, 24, 39] },
+    { label: 'TOTAL AMOUNT', value: `${currSym}${Math.round(totalAmount).toLocaleString()}`, fg: [17, 24, 39] },
+    { label: 'TOTAL RECEIVED', value: `${currSym}${Math.round(totalReceived).toLocaleString()}`, fg: GREEN_DARK_TEXT },
+    { label: 'REMAINING DUE', value: `${currSym}${Math.round(totalOutstanding).toLocaleString()}`, fg: RED },
+  ];
+  statBoxes.forEach((b, i) => {
+    const x = margin + i * (statBoxW + 3);
+    doc.setFillColor(248, 250, 249);
+    doc.setDrawColor(226, 232, 240);
+    doc.roundedRect(x, yPos, statBoxW, statBoxH, 2, 2, 'FD');
+    doc.setTextColor(100, 116, 139);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(6.3);
+    doc.text(b.label, x + statBoxW / 2, yPos + 6, { align: 'center' });
+    doc.setTextColor(...b.fg);
+    doc.setFontSize(9.5);
+    doc.text(b.value, x + statBoxW / 2, yPos + 13, { align: 'center' });
+  });
+  yPos += statBoxH + 6;
+
+  // =========================================================================
+  // 5. Carryover + Total Payable Outstanding bar
+  // =========================================================================
+  const carryH = previousDue > 0 ? 18 : 12;
+  doc.setFillColor(254, 252, 232);
+  doc.setDrawColor(253, 230, 138);
+  doc.roundedRect(margin, yPos, contentWidth, carryH, 3, 3, 'FD');
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.setTextColor(120, 96, 15);
+  if (previousDue > 0) {
+    doc.text(`PREVIOUS CARRYOVER BALANCE: ${currSym}${Math.round(previousDue).toLocaleString()}  |  ACTIVE BILL: ${currSym}${Math.round(totalAmount).toLocaleString()}`, margin + 4, yPos + 6);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(...RED);
+    doc.text(`TOTAL PAYABLE OUTSTANDING: ${currSym}${Math.round(totalOutstanding).toLocaleString()}`, margin + 4, yPos + 13);
+  } else {
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(...RED);
+    doc.text(`TOTAL PAYABLE OUTSTANDING: ${currSym}${Math.round(totalOutstanding).toLocaleString()}`, margin + 4, yPos + 8);
+  }
+  yPos += carryH + 8;
+
+  // =========================================================================
+  // 6. TRANSACTION LEDGER DETAILS — paginated table, newest entries first
+  // =========================================================================
+  checkPageBreak(14);
+  doc.setTextColor(...GREEN);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10);
+  doc.text('TRANSACTION LEDGER DETAILS', margin, yPos);
+  yPos += 5;
+
+  const ledgerCols = [
+    { title: 'Date', width: 20 },
+    { title: 'Time', width: 20 },
+    { title: 'Shift', width: 20 },
+    { title: 'Category', width: 22 },
+    { title: 'Quantity', width: 24 },
+    { title: 'Rate (Rs.)', width: 24 },
+    { title: 'Total (Rs.)', width: 26 },
+    { title: 'Due (Rs.)', width: 26 },
+  ];
+  const tableRowH = 6.5;
+
+  const drawLedgerHeader = () => {
+    doc.setFillColor(...GREEN);
+    doc.rect(margin, yPos, contentWidth, tableRowH, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7.5);
+    let curX = margin + 2;
+    ledgerCols.forEach((c) => {
+      doc.text(c.title, curX, yPos + 4.3);
+      curX += c.width;
+    });
+    yPos += tableRowH;
+  };
+
+  drawLedgerHeader();
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7.5);
+
+  const sortedEntries = [...entries].sort((a, b) => b.date.localeCompare(a.date) || b.timestamp.localeCompare(a.timestamp));
+
+  if (sortedEntries.length === 0) {
+    doc.setTextColor(100, 116, 139);
+    doc.setFont('helvetica', 'italic');
+    doc.text('No transactions recorded for this period.', margin + 3, yPos + 4.5);
+    yPos += tableRowH;
+  } else {
+    sortedEntries.forEach((e, idx) => {
+      if (yPos + tableRowH > pageHeight - 20) {
+        doc.addPage();
+        yPos = 16;
+        drawLedgerHeader();
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(7.5);
+      }
+
+      const isEven = idx % 2 === 0;
+      doc.setFillColor(isEven ? 255 : 245, isEven ? 255 : 250, isEven ? 255 : 247);
+      doc.rect(margin, yPos, contentWidth, tableRowH, 'F');
+      doc.setDrawColor(230, 238, 233);
+      doc.line(margin, yPos + tableRowH, margin + contentWidth, yPos + tableRowH);
+
+      doc.setTextColor(30, 41, 59);
+      let curX = margin + 2;
+      doc.text(e.date, curX, yPos + 4.5);
+      curX += ledgerCols[0].width;
+      doc.text(e.timestamp || '-', curX, yPos + 4.5);
+      curX += ledgerCols[1].width;
+      doc.text(e.shift.toUpperCase(), curX, yPos + 4.5);
+      curX += ledgerCols[2].width;
+      doc.text((e.milkType || 'other').toUpperCase(), curX, yPos + 4.5);
+      curX += ledgerCols[3].width;
+      doc.text(`${e.liters.toFixed(2)} L`, curX, yPos + 4.5);
+      curX += ledgerCols[4].width;
+      doc.text(`${currSym} ${e.ratePerLiter.toFixed(2)}`, curX, yPos + 4.5);
+      curX += ledgerCols[5].width;
+      doc.setFont('helvetica', 'bold');
+      doc.text(`${currSym} ${Math.round(e.totalAmount).toLocaleString()}`, curX, yPos + 4.5);
+      curX += ledgerCols[6].width;
+      doc.setTextColor(...RED);
+      doc.text(`${currSym} ${Math.round(e.dueAmount).toLocaleString()}`, curX, yPos + 4.5);
+      doc.setFont('helvetica', 'normal');
+
+      yPos += tableRowH;
+    });
+  }
+
+  checkPageBreak(tableRowH + 2);
+  doc.setFillColor(236, 253, 245);
+  doc.setDrawColor(167, 243, 208);
+  doc.rect(margin, yPos, contentWidth, tableRowH + 1, 'FD');
+  doc.setTextColor(...GREEN_DARK_TEXT);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(7.5);
+  doc.text('TOTAL PERIOD TRANSACTIONS', margin + 2, yPos + 4.8);
+  doc.text(`${totalMilk.toFixed(2)} L`, margin + ledgerCols[0].width + ledgerCols[1].width + ledgerCols[2].width + ledgerCols[3].width + 2, yPos + 4.8);
+  doc.text(`${currSym} ${Math.round(totalAmount).toLocaleString()}`, margin + ledgerCols.slice(0, 6).reduce((s, c) => s + c.width, 0) + 2, yPos + 4.8);
+  doc.setTextColor(...RED);
+  doc.text(`${currSym} ${Math.round(periodDue).toLocaleString()}`, margin + ledgerCols.slice(0, 7).reduce((s, c) => s + c.width, 0) + 2, yPos + 4.8);
+  yPos += tableRowH + 1 + 8;
+
+  // =========================================================================
+  // 7. PAYMENT DETAILS + QR (enabled accounts only; QR is the real uploaded
+  // image, never a fabricated placeholder graphic on a real financial document)
+  // =========================================================================
+  const enabledAccounts = getEnabledPaymentAccounts(businessSettings);
+  checkPageBreak(30);
+  doc.setTextColor(...GREEN);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10);
+  doc.text('PAYMENT DETAILS', margin, yPos);
+  yPos += 6;
+
+  if (enabledAccounts.length === 0) {
+    doc.setTextColor(100, 116, 139);
+    doc.setFont('helvetica', 'italic');
+    doc.setFontSize(8.5);
+    doc.text('No payment account has been enabled for this business.', margin, yPos);
+    yPos += 10;
+  } else {
+    const qrAccount = enabledAccounts.find((a) => a.qrCodeUrl);
+    const paymentBoxH = Math.max(enabledAccounts.length * 6 + 6, qrAccount ? 32 : 0);
+    doc.setDrawColor(226, 232, 240);
+    doc.roundedRect(margin, yPos, contentWidth, paymentBoxH, 3, 3, 'S');
+
+    let lineY = yPos + 7;
+    doc.setFontSize(8.5);
+    enabledAccounts.forEach((acc) => {
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(...GREEN);
+      const label = `${acc.name}: `;
+      doc.text(label, margin + 4, lineY);
+      const labelW = doc.getTextWidth(label);
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(51, 65, 85);
+      const detail = `${acc.accountTitle} (${acc.primaryDetail}${acc.secondaryDetail ? ` · ${acc.secondaryDetail}` : ''})`;
+      doc.text(detail, margin + 4 + labelW, lineY);
+      lineY += 6;
+    });
+
+    if (qrAccount?.qrCodeUrl) {
+      try {
+        const qrSize = 24;
+        const qrX = pageWidth - margin - qrSize - 4;
+        const qrY = yPos + 4;
+        const imgFormat = qrAccount.qrCodeUrl.startsWith('data:image/jpeg') || qrAccount.qrCodeUrl.startsWith('data:image/jpg') ? 'JPEG' : 'PNG';
+        doc.addImage(qrAccount.qrCodeUrl, imgFormat, qrX, qrY, qrSize, qrSize);
+        doc.setTextColor(...GREEN);
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(6.5);
+        doc.text(`SCAN TO PAY (${qrAccount.name.toUpperCase()})`, qrX + qrSize / 2, qrY + qrSize + 4, { align: 'center' });
+      } catch (err) {
+        console.warn('Failed to render payment QR code in PDF:', err);
+      }
+    }
+
+    yPos += paymentBoxH + 6;
+  }
+
+  // =========================================================================
+  // 8. 7-Day Payment Notice
+  // =========================================================================
+  checkPageBreak(18);
+  doc.setFillColor(255, 251, 235);
+  doc.setDrawColor(252, 211, 77);
+  doc.roundedRect(margin, yPos, contentWidth, 16, 3, 3, 'FD');
+  doc.setTextColor(120, 53, 15);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8.5);
+  doc.text('PAYMENT NOTICE', margin + 4, yPos + 6);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.text('After the bill is generated, the customer has 7 days to pay the outstanding dues.', margin + 4, yPos + 11);
+  doc.setFont('helvetica', 'bold');
+  doc.text(`Bill Generated Date: ${billDateStr}  |  Payment Due Date: ${dueDateStr} (Strict 7-Day Window)`, margin + 4, yPos + 15.5);
+  yPos += 24;
+
+  // =========================================================================
+  // 9. Dual Signatures
+  // =========================================================================
+  checkPageBreak(26);
+  const sigColW = contentWidth / 2;
+  const drawSignature = (x: number, title: string, subtitle: string) => {
+    doc.setDrawColor(148, 163, 184);
+    doc.setLineDashPattern([1.5, 1.5], 0);
+    doc.line(x + sigColW * 0.15, yPos, x + sigColW * 0.85, yPos);
+    doc.setLineDashPattern([], 0);
+    doc.setTextColor(30, 41, 59);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8.5);
+    doc.text(title, x + sigColW / 2, yPos + 6, { align: 'center' });
+    doc.setTextColor(100, 116, 139);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7.5);
+    doc.text(subtitle, x + sigColW / 2, yPos + 11, { align: 'center' });
+  };
+  drawSignature(margin, 'Authorized Signature', companyName);
+  drawSignature(margin + sigColW, 'Customer Signature', contact.name);
+  yPos += 18;
+
+  // =========================================================================
+  // 10. Footer
+  // =========================================================================
+  checkPageBreak(10);
+  doc.setTextColor(148, 163, 184);
+  doc.setFont('helvetica', 'normal');
   doc.setFontSize(7);
-  doc.text('Powered by Dairy Diary', pageWidth / 2, yPos, { align: 'center' });
+  doc.text(
+    `${companyName} · Generated by Dairy Diary · Developed by SAWAA Networking`,
+    pageWidth / 2,
+    yPos,
+    { align: 'center' }
+  );
 
   // Return generated result
   const pdfBlob = doc.output('blob');
