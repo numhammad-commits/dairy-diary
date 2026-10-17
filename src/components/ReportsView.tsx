@@ -145,6 +145,19 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entries, timeFrame, selectedDate, selectedMonth, selectedYear, typeFilter, shiftFilter]);
 
+  // Same date/shift scoping as periodMilkEntries, but never excluded by the
+  // Buy/Sell typeFilter tab — Profit & Loss must always see both sides of
+  // the ledger regardless of which tab happens to be active.
+  const periodMilkEntriesForPL = useMemo(() => {
+    return entries.filter((entry) => {
+      if (!dateInPeriod(entry.date)) return false;
+      if (shiftFilter === 'morning' && entry.shift !== 'morning') return false;
+      if (shiftFilter === 'evening' && entry.shift !== 'evening') return false;
+      return true;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entries, timeFrame, selectedDate, selectedMonth, selectedYear, shiftFilter]);
+
   // 6. Period-scoped payments (same billingMonth-aware rule as every other screen, extended to monthly/yearly)
   const periodPayments = useMemo(() => {
     return (paymentRecords || []).filter((p) => {
@@ -243,16 +256,16 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   // This is a distinct accounting metric, not a customer-due calculation, so it does not go
   // through getCustomerMonthDue (which only ever answers "what does one customer owe").
   const plMetrics = useMemo(() => {
-    const revenue = periodMilkEntries
+    const revenue = periodMilkEntriesForPL
       .filter((e) => e.contactRole === 'buyer')
       .reduce((sum, e) => sum + e.totalAmount, 0);
-    const cost = periodMilkEntries
+    const cost = periodMilkEntriesForPL
       .filter((e) => e.contactRole === 'seller')
       .reduce((sum, e) => sum + e.totalAmount, 0);
     const expensesTotal = periodExpenses.reduce((sum, e) => sum + e.amount, 0);
     const netProfit = revenue - cost - expensesTotal;
     return { revenue, cost, expensesTotal, netProfit };
-  }, [periodMilkEntries, periodExpenses]);
+  }, [periodMilkEntriesForPL, periodExpenses]);
 
   // 10. Unified Entry List: Milk + Payment + Expense, filtered by Item Type and search, newest first
   const unifiedItems = useMemo(() => {
