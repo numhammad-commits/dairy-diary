@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { MobileFrame } from './components/MobileFrame';
+import { SawaaLogo } from './components/SawaaLogo';
 import { TopAppBar } from './components/TopAppBar';
 import { MonthSelector } from './components/MonthSelector';
 import { FinancialSummaryCard } from './components/FinancialSummaryCard';
@@ -74,6 +75,20 @@ import {
 } from './utils/storage';
 
 export default function App() {
+  // Brief in-app splash shown on first load, under the (frozen) logo mark.
+  // Two-step so the fade-out transition actually plays before unmounting.
+  const [showSplash, setShowSplash] = useState<boolean>(true);
+  const [splashFadingOut, setSplashFadingOut] = useState<boolean>(false);
+
+  useEffect(() => {
+    const fadeTimer = setTimeout(() => setSplashFadingOut(true), 900);
+    const removeTimer = setTimeout(() => setShowSplash(false), 1400);
+    return () => {
+      clearTimeout(fadeTimer);
+      clearTimeout(removeTimer);
+    };
+  }, []);
+
   // 1. Core Persistent State (Real Database, Section 3)
   const [currentMonthKey, setCurrentMonthKey] = useState<string>(getDeviceCurrentMonthKey);
   const [contacts, setContacts] = useState<Contact[]>(loadPersistedContacts);
@@ -657,6 +672,20 @@ export default function App() {
 
   return (
     <MobileFrame>
+      {/* 0. Brief Splash Screen (fades out after first load) */}
+      {showSplash && (
+        <div
+          className={`fixed inset-0 z-[9999] flex flex-col items-center justify-center gap-3 bg-[#1B4332] transition-opacity duration-500 ${
+            splashFadingOut ? 'opacity-0 pointer-events-none' : 'opacity-100'
+          }`}
+        >
+          <SawaaLogo variant="stacked" size="xl" theme="white" />
+          <p className="text-[11px] font-semibold tracking-wide text-emerald-200 uppercase">
+            Developed by SAWAA Networking
+          </p>
+        </div>
+      )}
+
       {/* 1. Primary Top App Bar (Pinned to top, Greenish #1E5631 theme - shown on home and expenses tabs) */}
       {activeNavTab !== 'settings' && activeNavTab !== 'calculator' && activeNavTab !== 'reminders' && activeNavTab !== 'payment_history' && activeNavTab !== 'export' && activeNavTab !== 'reports' && activeNavTab !== 'add_user' && (
         <TopAppBar

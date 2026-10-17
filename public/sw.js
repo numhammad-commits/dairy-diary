@@ -45,6 +45,25 @@ self.addEventListener('fetch', (event) => {
   // Ignore chrome-extension or other non-http schemes
   if (!event.request.url.startsWith('http')) return;
 
+  // Navigation requests (the app shell itself, e.g. a reload/pull-to-refresh)
+  // get dedicated handling: on success, cache the response under the
+  // canonical '/' key rather than the exact requested URL, so an offline
+  // reload always finds the shell regardless of query string.
+  if (event.request.mode === 'navigate') {
+    event.respondWith(
+      fetch(event.request)
+        .then((networkResponse) => {
+          if (networkResponse && networkResponse.status === 200) {
+            const responseToCache = networkResponse.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put('/', responseToCache));
+          }
+          return networkResponse;
+        })
+        .catch(() => caches.match('/').then((cached) => cached || caches.match('/index.html')))
+    );
+    return;
+  }
+
   event.respondWith(
     fetch(event.request)
       .then((networkResponse) => {
