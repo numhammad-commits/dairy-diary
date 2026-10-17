@@ -1,0 +1,51 @@
+@import "tailwindcss";
+
+/* Clean Light Theme with Dark Forest Green Header */
+.bg-glass-gradient {
+  background-color: #F4FBF7;
+  background-image: none;
+}
+
+.glass-card {
+  background: #FFFFFF;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: 1px solid #D6E9E1;
+  box-shadow: 0 2px 8px rgba(22, 59, 50, 0.05);
+}
+
+.glass-tile {
+  background: #FFFFFF;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: 1px solid #D6E9E1;
+  box-shadow: 0 1px 4px rgba(22, 59, 50, 0.04);
+}
+
+.glass-pill {
+  background: #FFFFFF;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: 1px solid #D6E9E1;
+  box-shadow: 0 1px 4px rgba(22, 59, 50, 0.04);
+}
+
+/* Typography & Contrast Colors (Warnings 5 & 6) */
+.text-glass-lift {
+  text-shadow: none !important;
+}
+
+.text-glass-glow-red {
+  color: #E5485D !important;
+  text-shadow: none !important;
+}
+
+.text-glass-glow-green {
+  color: #0B9B72 !important;
+  text-shadow: none !important;
+}
+
+.text-glass-glow-gold {
+  color: #FBBF24 !important;
+  text-shadow: none !important;
+}

@@ -1,0 +1,14 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+
+# Personal data exports / backups - contain real customer info, phone numbers, bank IBAN
+dairy-diary-backup*.json
+
+# Source snapshot zip - redundant once this repo is the source of truth
+dairy-diary-source.zip

@@ -1,0 +1,1069 @@
+import React, { useState, useMemo, useEffect } from 'react';
+import { 
+  ArrowLeft, 
+  FileText, 
+  Phone, 
+  MoreVertical, 
+  Edit2, 
+  ChevronLeft, 
+  ChevronRight, 
+  Info, 
+  Share2, 
+  Wallet, 
+  Clock, 
+  CalendarCheck, 
+  Search, 
+  SlidersHorizontal, 
+  Sun, 
+  Moon, 
+  Printer, 
+  Plus, 
+  X, 
+  Check, 
+  Package,
+  MessageCircle,
+  FileSpreadsheet,
+  AlertTriangle,
+  Trash2
+} from 'lucide-react';
+import { Contact, LedgerEntry, ShiftType, MilkType, BusinessSettings, PaymentRecord } from '../types/dairy';
+import { formatPKR, formatLiters, getMonthDisplay, shiftMonthKey, generateWhatsAppMessage, getDeviceTodayDate, getDeviceCurrentMonthKey } from '../utils/formatters';
+import { getCustomerMonthDue } from '../utils/calculations';
+import { EditCustomerScreen } from './EditCustomerScreen';
+import { ReportPeriodBottomSheet } from './ReportPeriodBottomSheet';
+import { EditEntryScreen } from './EditEntryScreen';
+import { AddEntryScreen } from './AddEntryScreen';
+import { BulkEntryModal } from './BulkEntryModal';
+import { CustomerPaymentHistoryModal } from './CustomerPaymentHistoryModal';
+import { CustomerReceivePaymentModal } from './CustomerReceivePaymentModal';
+import { CustomerShareReceiptModal } from './CustomerShareReceiptModal';
+
+interface ContactDetailModalProps {
+  contact: Contact;
+  entries: LedgerEntry[];
+  monthDisplay: string;
+  currentMonthKey?: string;
+  businessSettings?: BusinessSettings;
+  paymentRecords?: PaymentRecord[];
+  isPremium?: boolean;
+  onOpenPremium?: () => void;
+  onClose: () => void;
+  onQuickAdd: (contact: Contact) => void;
+  onSettlePayment: (contactId: string, amount: number, paymentDate?: string, paymentMethod?: string, notes?: string, targetMonth?: string) => void;
+  onSaveNewEntry?: (entry: Omit<LedgerEntry, 'id'>) => void;
+  onSaveBulkEntries?: (newEntries: Omit<LedgerEntry, 'id'>[]) => void;
+  onUpdateContactRate?: (contactId: string, newRate: number) => void;
+  onUpdateContact?: (updatedContact: Contact) => void;
+  onUpdateEntry?: (updatedEntry: LedgerEntry) => void;
+  onDeleteEntry?: (entryId: string) => void;
+  onDeleteContact?: (contactId: string) => void;
+}
+
+export const ContactDetailModal: React.FC<ContactDetailModalProps> = ({
+  contact,
+  entries,
+  monthDisplay: initialMonthDisplay,
+  currentMonthKey: initialCurrentMonthKey,
+  businessSettings,
+  paymentRecords = [],
+  isPremium = false,
+  onOpenPremium,
+  onClose,
+  onQuickAdd,
+  onSettlePayment,
+  onSaveNewEntry,
+  onSaveBulkEntries,
+  onUpdateContactRate,
+  onUpdateContact,
+  onUpdateEntry,
+  onDeleteEntry,
+  onDeleteContact,
+}) => {
+  // Canonical contact state for instant reactive updates
+  const [activeContact, setActiveContact] = useState<Contact>(contact);
+  const [isEditingCustomer, setIsEditingCustomer] = useState<boolean>(false);
+  const [editingEntry, setEditingEntry] = useState<LedgerEntry | null>(null);
+
+  useEffect(() => {
+    setActiveContact(contact);
+  }, [contact]);
+
+  // Calendar Navigation State
+  const [currentMonthKey, setCurrentMonthKey] = useState<string>(
+    initialCurrentMonthKey || getDeviceCurrentMonthKey()
+  );
+
+  useEffect(() => {
+    if (initialCurrentMonthKey) {
+      setCurrentMonthKey(initialCurrentMonthKey);
+    }
+  }, [initialCurrentMonthKey]);
+  const [viewAs, setViewAs] = useState<'Monthly' | 'Daily' | 'Weekly'>('Monthly');
+  
+  // Search & Filter State
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [shiftFilter, setShiftFilter] = useState<'all' | 'morning' | 'evening'>('all');
+  const [showFilterDrawer, setShowFilterDrawer] = useState<boolean>(false);
+
+  // Modals & Action Sheets State
+  const [showShareModal, setShowShareModal] = useState<boolean>(false);
+  const [showReceiveModal, setShowReceiveModal] = useState<boolean>(false);
+  const [receiveAmount, setReceiveAmount] = useState<string>('');
+  const [showRateEditModal, setShowRateEditModal] = useState<boolean>(false);
+  const [newRate, setNewRate] = useState<number>(contact.defaultRate || 240);
+  const [showBulkModal, setShowBulkModal] = useState<boolean>(false);
+  const [showPaymentHistory, setShowPaymentHistory] = useState<boolean>(false);
+  const [showAddEntryModal, setShowAddEntryModal] = useState<boolean>(false);
+  const [showOptionsMenu, setShowOptionsMenu] = useState<boolean>(false);
+  const [showReportPeriodSheet, setShowReportPeriodSheet] = useState<boolean>(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState<boolean>(false);
+  const [showToast, setShowToast] = useState<string | null>(null);
+
+  // Single source of truth for this customer's payments from global paymentRecords
+  const customerPayments = useMemo(() => {
+    const list = (paymentRecords || []).filter(
+      (p) => p.contactId === contact.id || p.contactName === contact.name
+    );
+    const seenIds = new Set<string>();
+    const seenSignatures = new Set<string>();
+    return list.filter((p) => {
+      if (seenIds.has(p.id)) return false;
+      seenIds.add(p.id);
+
+      const sig = `${p.contactId || p.contactName}_${p.date}_${p.timestamp || ''}_${p.amount}`;
+      if (seenSignatures.has(sig)) return false;
+      seenSignatures.add(sig);
+
+      return true;
+    });
+  }, [paymentRecords, contact.id, contact.name]);
+
+  // New entry form state for Quick Add FAB
+  const [entryLiters, setEntryLiters] = useState<string>('2.0');
+  const [entryRate, setEntryRate] = useState<number>(contact.defaultRate || 240);
+  const [entryShift, setEntryShift] = useState<ShiftType>('morning');
+  const [entryMilkType, setEntryMilkType] = useState<MilkType>('mix');
+  const [entryDate, setEntryDate] = useState<string>(getDeviceTodayDate);
+
+  // Trigger Toast Notification
+  const triggerToast = (msg: string) => {
+    setShowToast(msg);
+    setTimeout(() => setShowToast(null), 3000);
+  };
+
+  // Month navigation chevrons
+  const handlePrevMonth = () => {
+    setCurrentMonthKey((prev) => shiftMonthKey(prev, -1));
+  };
+
+  const handleNextMonth = () => {
+    setCurrentMonthKey((prev) => shiftMonthKey(prev, 1));
+  };
+
+  // Month Display String (e.g., "October 2026")
+  const activeMonthDisplay = useMemo(() => {
+    const [yearStr, monthStr] = currentMonthKey.split('-');
+    const year = parseInt(yearStr, 10);
+    const month = parseInt(monthStr, 10) - 1;
+    const date = new Date(year, month, 1);
+    return date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  }, [currentMonthKey]);
+
+  // Filter entries for this contact and current month
+  const contactEntries = useMemo(() => {
+    return entries.filter(
+      (e) => e.contactId === contact.id && e.date.startsWith(currentMonthKey)
+    );
+  }, [entries, contact.id, currentMonthKey]);
+
+  // Search filtered entries
+  const displayedEntries = useMemo(() => {
+    let result = contactEntries;
+
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      result = result.filter(
+        (e) =>
+          e.date.includes(q) ||
+          e.timestamp.toLowerCase().includes(q) ||
+          e.shift.toLowerCase().includes(q) ||
+          e.liters.toString().includes(q) ||
+          e.totalAmount.toString().includes(q)
+      );
+    }
+
+    if (shiftFilter !== 'all') {
+      result = result.filter((e) => e.shift === shiftFilter);
+    }
+
+    // Sort descending by date and time
+    return result.sort((a, b) => b.date.localeCompare(a.date) || b.timestamp.localeCompare(a.timestamp));
+  }, [contactEntries, searchQuery, shiftFilter]);
+
+  // Reactive Month Financial Calculations (Single source of truth via getCustomerMonthDue)
+  const metrics = useMemo(() => {
+    const fin = getCustomerMonthDue(contact, currentMonthKey, entries, customerPayments);
+
+    return {
+      milk: fin.liters,
+      amount: fin.amount,
+      received: fin.received,
+      due: fin.due,
+      previousDue: fin.previousDue,
+      totalOutstanding: fin.totalOutstanding,
+      count: fin.entriesCount,
+    };
+  }, [contact, currentMonthKey, entries, customerPayments]);
+
+  // Actions
+  const handleCall = () => {
+    window.location.href = `tel:${contact.phone}`;
+  };
+
+  const handleShareWhatsApp = () => {
+    const msg = generateWhatsAppMessage(
+      contact.name,
+      contact.role,
+      metrics.due,
+      metrics.totalOutstanding,
+      metrics.milk,
+      activeMonthDisplay
+    );
+    window.open(`https://wa.me/${contact.phone.replace(/[^0-9]/g, '')}?text=${msg}`, '_blank');
+  };
+
+  const handlePaymentReminder = () => {
+    const text = `*Dairy Diary - Payment Reminder*\n\nDear *${contact.name}*,\nYour active milk bill for *${activeMonthDisplay}* is *${formatPKR(metrics.due)}*.\nIncludes previous balance: *${formatPKR(metrics.previousDue)}*.\n*Total Outstanding Due: ${formatPKR(metrics.totalOutstanding)}*.\n\nPlease clear your ledger account at your earliest convenience.\nAl-Madina Dairy Center · +92 301 5541290`;
+    window.open(`https://wa.me/${contact.phone.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(text)}`, '_blank');
+    triggerToast('Payment Reminder sent via WhatsApp');
+  };
+
+  const handleDownloadPDF = () => {
+    window.print();
+    triggerToast('Preparing Statement PDF...');
+  };
+
+  const handlePrintRow = (entry: LedgerEntry) => {
+    triggerToast(`Printing Receipt for ${entry.date} (${entry.liters} L)...`);
+    window.print();
+  };
+
+  const handleShareRow = (entry: LedgerEntry) => {
+    const text = `*Milk Receipt - Dairy Diary*\nDate: ${entry.date} | ${entry.timestamp}\nShift: ${entry.shift.toUpperCase()}\nQuantity: ${entry.liters} L @ Rs${entry.ratePerLiter}/L\nTotal: Rs${entry.totalAmount}\nCustomer: ${contact.name}`;
+    window.open(`https://wa.me/${contact.phone.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(text)}`, '_blank');
+  };
+
+  const handleSavePayment = (data: {
+    amount: number;
+    month: string;
+    date: string;
+    paymentMethod: string;
+    notes?: string;
+  }) => {
+    onSettlePayment(contact.id, data.amount, data.date, data.paymentMethod, data.notes, data.month);
+    setShowReceiveModal(false);
+    triggerToast(`Payment of Rs ${data.amount.toLocaleString('en-PK')} received.`);
+  };
+
+  const handleSaveRate = () => {
+    if (onUpdateContactRate) {
+      onUpdateContactRate(contact.id, newRate);
+    }
+    contact.defaultRate = newRate;
+    setShowRateEditModal(false);
+    triggerToast(`Rate updated to Rs${newRate}/L`);
+  };
+
+  const handleCreateEntry = (e: React.FormEvent) => {
+    e.preventDefault();
+    const liters = parseFloat(entryLiters) || 1.0;
+    const rate = entryRate || 240;
+    const totalAmount = Math.round(liters * rate);
+
+    const now = new Date();
+    const timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+
+    if (onSaveNewEntry) {
+      onSaveNewEntry({
+        contactId: contact.id,
+        contactName: contact.name,
+        contactRole: contact.role,
+        date: entryDate,
+        timestamp: timeStr,
+        shift: entryShift,
+        milkType: entryMilkType,
+        liters,
+        ratePerLiter: rate,
+        totalAmount,
+        receivedAmount: 0,
+        dueAmount: totalAmount,
+        paymentMode: 'credit',
+      });
+    }
+
+    setShowAddEntryModal(false);
+    triggerToast(`Added ${liters} L entry for ${activeContact.name}`);
+  };
+
+  const handleSaveCustomer = (updatedContact: Contact) => {
+    setActiveContact(updatedContact);
+    if (onUpdateContact) {
+      onUpdateContact(updatedContact);
+    }
+    setIsEditingCustomer(false);
+    triggerToast('Customer details updated successfully.');
+  };
+
+  if (isEditingCustomer) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs animate-in fade-in duration-200 select-none">
+        <div 
+          className="w-full max-w-md h-full bg-[#f8faf9] shadow-2xl flex flex-col overflow-hidden relative"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <EditCustomerScreen
+            contact={activeContact}
+            onBack={() => setIsEditingCustomer(false)}
+            onSave={handleSaveCustomer}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  if (editingEntry) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs animate-in fade-in duration-200 select-none">
+        <div 
+          className="w-full max-w-md h-full bg-[#f8faf9] shadow-2xl flex flex-col overflow-hidden relative"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <EditEntryScreen
+            entry={editingEntry}
+            contact={activeContact}
+            onUpdate={(updated) => {
+              if (onUpdateEntry) onUpdateEntry(updated);
+              setEditingEntry(null);
+            }}
+            onDelete={(id) => {
+              if (onDeleteEntry) onDeleteEntry(id);
+              setEditingEntry(null);
+            }}
+            onBack={() => setEditingEntry(null)}
+            showToast={triggerToast}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs animate-in fade-in duration-200 select-none">
+      <div 
+        className="w-full max-w-md h-full bg-glass-gradient shadow-2xl flex flex-col overflow-hidden relative"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* ========================================================================= */}
+        {/* 1. TOP HEADER APP BAR (Emerald Green Pinned Bar)                         */}
+        {/* ========================================================================= */}
+        <div className="relative bg-[#1B4332] text-white px-4 pt-3.5 pb-3 shrink-0 shadow-sm z-30">
+          {/* Top Row: Back button, Name, PDF, Call, Options */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2.5 min-w-0 pr-2">
+              <button
+                onClick={onClose}
+                className="w-9 h-9 rounded-full bg-white/10 hover:bg-white/20 active:bg-white/30 backdrop-blur-md border border-white/20 flex items-center justify-center text-white transition-all shadow-sm active:scale-95 cursor-pointer shrink-0"
+                title="Go Back"
+              >
+                <ArrowLeft className="w-5 h-5 stroke-[2.5]" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsEditingCustomer(true)}
+                className="text-left font-black tracking-tight text-white truncate hover:underline cursor-pointer focus:outline-none flex items-center gap-1.5 group max-w-full text-glass-lift"
+                title="Tap to Edit Customer Profile"
+              >
+                <span className="text-lg font-black truncate text-[#FFFFFF]">{activeContact.name}</span>
+              </button>
+            </div>
+
+            {/* Right Action Icons */}
+            <div className="flex items-center gap-1.5 shrink-0">
+              {/* PDF Document Download Button -> Opens Report Period Bottom Sheet */}
+              <button
+                onClick={() => setShowReportPeriodSheet(true)}
+                className="h-9 px-2.5 rounded-full bg-white/10 hover:bg-white/20 active:bg-white/30 backdrop-blur-md border border-white/20 text-white text-xs font-black flex items-center gap-1 transition-all shadow-sm active:scale-95 cursor-pointer text-glass-lift"
+                title="Select Report Period"
+              >
+                <FileText className="w-3.5 h-3.5 stroke-[2.2]" />
+                <span className="text-[11px] font-bold">PDF</span>
+              </button>
+
+              {/* Call Shortcut Icon */}
+              <button
+                onClick={handleCall}
+                className="w-9 h-9 rounded-full bg-white/10 hover:bg-white/20 active:bg-white/30 backdrop-blur-md border border-white/20 flex items-center justify-center text-white transition-all shadow-sm active:scale-95 cursor-pointer"
+                title="Call Contact"
+              >
+                <Phone className="w-4 h-4 stroke-[2.2]" />
+              </button>
+
+              {/* 3-Dot Options Dropdown */}
+              <div className="relative">
+                <button
+                  onClick={() => setShowOptionsMenu(!showOptionsMenu)}
+                  className="w-9 h-9 rounded-full bg-white/10 hover:bg-white/20 active:bg-white/30 backdrop-blur-md border border-white/20 flex items-center justify-center text-white transition-all shadow-sm active:scale-95 cursor-pointer"
+                  title="More Options"
+                >
+                  <MoreVertical className="w-4 h-4 stroke-[2.2]" />
+                </button>
+
+                {showOptionsMenu && (
+                  <div 
+                    className="absolute right-0 mt-1 w-48 bg-white rounded-2xl shadow-2xl border border-slate-200 py-1.5 z-50 text-slate-800 text-xs font-bold"
+                    onClick={() => setShowOptionsMenu(false)}
+                  >
+                    <button 
+                      onClick={() => setIsEditingCustomer(true)}
+                      className="w-full px-3.5 py-2 text-left hover:bg-slate-50 flex items-center gap-2 cursor-pointer text-[#163B32]"
+                    >
+                      <Edit2 className="w-3.5 h-3.5 text-[#0B8F68]" />
+                      <span>Edit Customer Profile</span>
+                    </button>
+                    <button 
+                      onClick={() => setShowRateEditModal(true)}
+                      className="w-full px-3.5 py-2 text-left hover:bg-slate-50 flex items-center gap-2 cursor-pointer text-slate-700"
+                    >
+                      <Edit2 className="w-3.5 h-3.5 text-slate-400" />
+                      <span>Edit Price Rate</span>
+                    </button>
+                    <button 
+                      onClick={handlePaymentReminder}
+                      className="w-full px-3.5 py-2 text-left hover:bg-rose-50 flex items-center gap-2 cursor-pointer text-rose-600"
+                    >
+                      <MessageCircle className="w-3.5 h-3.5" />
+                      <span>Send Due Reminder</span>
+                    </button>
+                    <button 
+                      onClick={() => setShowReportPeriodSheet(true)}
+                      className="w-full px-3.5 py-2 text-left hover:bg-slate-50 flex items-center gap-2 cursor-pointer text-slate-700"
+                    >
+                      <FileSpreadsheet className="w-3.5 h-3.5 text-slate-400" />
+                      <span>Export Period Statement</span>
+                    </button>
+                    <button 
+                      onClick={() => {
+                        setShowOptionsMenu(false);
+                        setShowDeleteConfirm(true);
+                      }}
+                      className="w-full px-3.5 py-2 text-left hover:bg-rose-50 flex items-center gap-2 cursor-pointer text-rose-600 border-t border-slate-100 mt-1 pt-1.5"
+                    >
+                      <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+                      <span>Delete Customer Profile</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Micro-Capsule Indicators Immediately Below Header */}
+          <div className="flex items-center gap-1.5 mt-2 flex-wrap text-[11px] font-extrabold">
+            {/* Rate Metric Pill with Edit Pencil */}
+            <button
+              onClick={() => setShowRateEditModal(true)}
+              className="px-2 py-0.5 rounded-full bg-white/15 hover:bg-white/25 border border-white/20 text-white flex items-center gap-1 transition-all cursor-pointer"
+              title="Click to change rate"
+            >
+              <span>Rs{activeContact.defaultRate ? activeContact.defaultRate.toFixed(2) : '240.00'}/L</span>
+              <Edit2 className="w-2.5 h-2.5 opacity-80" />
+            </button>
+
+            {/* Category Pill: OTHER / COW / BUFFALO */}
+            <span className="px-2 py-0.5 rounded-full bg-black/25 text-white/90 uppercase tracking-wider text-[10px]">
+              {activeContact.milkTypePref ? activeContact.milkTypePref.toUpperCase() : 'OTHER'}
+            </span>
+
+            {/* Transaction Role Pill: SELL MILK / BUY MILK */}
+            <span className="px-2 py-0.5 rounded-full bg-white/20 text-emerald-200 border border-white/20 uppercase tracking-wider text-[10px]">
+              {activeContact.role === 'buyer' ? 'SELL MILK' : 'BUY MILK'}
+            </span>
+          </div>
+        </div>
+
+        {/* ========================================================================= */}
+        {/* MAIN SCROLLABLE VIEWPORT                                                 */}
+        {/* ========================================================================= */}
+        <div className="flex-1 min-h-0 overflow-y-auto pb-24">
+          <div className="p-3.5 space-y-3">
+            
+            {/* 2. Header Metrics Display & Calendar Navigator Card */}
+            <div className="glass-card rounded-3xl p-4 shadow-xs border border-[#D6E9E1] space-y-3 text-[#163B32]">
+              {/* Calendar Navigator Bar: < October 2026 > and VIEW AS Monthly ▾ */}
+              <div className="flex items-center justify-between border-b border-[#D6E9E1] pb-2.5">
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handlePrevMonth}
+                    className="p-1 hover:bg-slate-100 active:bg-slate-200 rounded-full text-[#55756D] hover:text-[#163B32] transition-colors cursor-pointer"
+                  >
+                    <ChevronLeft className="w-4 h-4 stroke-[2.5]" />
+                  </button>
+                  <span className="font-black text-sm text-[#163B32] tracking-tight">
+                    {activeMonthDisplay}
+                  </span>
+                  <button
+                    onClick={handleNextMonth}
+                    className="p-1 hover:bg-slate-100 active:bg-slate-200 rounded-full text-[#55756D] hover:text-[#163B32] transition-colors cursor-pointer"
+                  >
+                    <ChevronRight className="w-4 h-4 stroke-[2.5]" />
+                  </button>
+                </div>
+
+                {/* View As Dropdown */}
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] font-bold text-[#55756D] uppercase tracking-wider">
+                    VIEW AS
+                  </span>
+                  <div className="relative">
+                    <select
+                      value={viewAs}
+                      onChange={(e) => setViewAs(e.target.value as any)}
+                      aria-label="View ledger as period"
+                      className="bg-slate-100 text-[#163B32] font-bold text-xs px-2.5 py-1 rounded-full border border-[#D6E9E1] outline-none cursor-pointer appearance-none pr-5"
+                    >
+                      <option value="Monthly">Monthly</option>
+                      <option value="Daily">Daily</option>
+                      <option value="Weekly">Weekly</option>
+                    </select>
+                    <span className="pointer-events-none absolute right-1.5 top-1 text-[#55756D] text-[10px]">▾</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Grid Metrics Array */}
+              <div className="grid grid-cols-3 gap-2 text-left">
+                {/* Milk */}
+                <div>
+                  <span className="text-[11px] font-bold text-[#55756D] block">Milk</span>
+                  <span className="text-base font-black text-[#163B32] tracking-tight block mt-0.5">
+                    {metrics.milk.toFixed(2)} L
+                  </span>
+                </div>
+
+                {/* Amount */}
+                <div>
+                  <span className="text-[11px] font-bold text-[#55756D] block">Amount</span>
+                  <span className="text-base font-black text-[#163B32] tracking-tight block mt-0.5">
+                    Rs{Math.round(metrics.amount)}
+                  </span>
+                </div>
+
+                {/* Due */}
+                <div>
+                  <span className="text-[11px] font-bold text-[#55756D] block">Due</span>
+                  <span className="text-base font-black text-[#E5485D] tracking-tight block mt-0.5">
+                    Rs{Math.round(metrics.due)}
+                  </span>
+                  {/* Carryover previous due metric under Due */}
+                  <span className="text-[10px] font-bold text-rose-600 block leading-tight mt-0.5">
+                    +{formatPKR(metrics.previousDue)} prev
+                  </span>
+                </div>
+              </div>
+
+              {/* Second Metrics Row: Received, Billing Pill, Outstanding Pill */}
+              <div className="flex items-center justify-between pt-1 gap-1.5 flex-wrap">
+                <div className="flex items-center gap-1">
+                  <span className="text-xs font-bold text-[#55756D]">Received</span>
+                  <span className="text-sm font-black text-[#0B9B72]">
+                    Rs{Math.round(metrics.received)}
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {/* Billing Pill Tag */}
+                  <div className="bg-rose-50 text-[#E5485D] border border-rose-200 px-2.5 py-0.5 rounded-full text-[11px] font-extrabold">
+                    Billing: Monthly (1)
+                  </div>
+
+                  {/* Outstanding Pill Tag */}
+                  <div className="bg-[#E1F3EA] text-[#0B8F68] border border-[#D6E9E1] px-2.5 py-0.5 rounded-full text-[11px] font-extrabold flex items-center gap-1">
+                    <Info className="w-3 h-3 text-[#0B8F68]" />
+                    <span>Outstanding: {formatPKR(metrics.totalOutstanding)}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Previous Due Subheading */}
+              <div className="text-[11px] font-medium text-[#55756D] italic pt-1 border-t border-[#D6E9E1] flex items-center gap-1">
+                <span>↺</span>
+                <span>Previous balance carried forward: {formatPKR(metrics.previousDue)}</span>
+              </div>
+            </div>
+
+            {/* 3. Quick Action Row Controls (4 Action Capsule Nodes) */}
+            <div className="grid grid-cols-4 gap-2">
+              {/* Card 1: Share */}
+              <button
+                onClick={() => setShowShareModal(true)}
+                className="glass-card hover:bg-slate-50 active:bg-slate-100 text-[#163B32] border border-[#D6E9E1] rounded-2xl py-2 px-1 text-center flex flex-col items-center justify-center transition-all cursor-pointer shadow-xs group active:scale-95"
+              >
+                <div className="w-7 h-7 rounded-full bg-[#E1F3EA] border border-[#D6E9E1] flex items-center justify-center mb-1 group-hover:scale-105 transition-transform text-[#0B8F68]">
+                  <Share2 className="w-3.5 h-3.5 stroke-[2.5]" />
+                </div>
+                <span className="text-[11px] font-extrabold tracking-tight text-[#163B32]">Share</span>
+              </button>
+
+              {/* Card 2: Receive (Wallet) */}
+              <button
+                onClick={() => setShowReceiveModal(true)}
+                className="glass-card hover:bg-slate-50 active:bg-slate-100 text-[#163B32] border border-[#D6E9E1] rounded-2xl py-2 px-1 text-center flex flex-col items-center justify-center transition-all cursor-pointer shadow-xs group active:scale-95"
+              >
+                <div className="w-7 h-7 rounded-full bg-teal-50 border border-teal-200 flex items-center justify-center mb-1 group-hover:scale-105 transition-transform text-teal-700">
+                  <Wallet className="w-3.5 h-3.5 stroke-[2.5]" />
+                </div>
+                <span className="text-[11px] font-extrabold tracking-tight text-[#163B32]">Receive</span>
+              </button>
+
+              {/* Card 3: History */}
+              <button
+                onClick={() => setShowPaymentHistory(true)}
+                className="glass-card hover:bg-slate-50 active:bg-slate-100 text-[#163B32] border border-[#D6E9E1] rounded-2xl py-2 px-1 text-center flex flex-col items-center justify-center transition-all cursor-pointer shadow-xs group active:scale-95"
+              >
+                <div className="w-7 h-7 rounded-full bg-purple-50 border border-purple-200 flex items-center justify-center mb-1 group-hover:scale-105 transition-transform text-purple-700">
+                  <Clock className="w-3.5 h-3.5 stroke-[2.5]" />
+                </div>
+                <span className="text-[11px] font-extrabold tracking-tight text-[#163B32]">History</span>
+              </button>
+
+              {/* Card 4: Bulk Entry */}
+              <button
+                onClick={() => setShowBulkModal(true)}
+                className="glass-card hover:bg-slate-50 active:bg-slate-100 text-[#163B32] border border-[#D6E9E1] rounded-2xl py-2 px-1 text-center flex flex-col items-center justify-center transition-all cursor-pointer shadow-xs group active:scale-95"
+              >
+                <div className="w-7 h-7 rounded-full bg-[#E1F3EA] border border-[#D6E9E1] flex items-center justify-center mb-1 group-hover:scale-105 transition-transform text-[#0B8F68]">
+                  <CalendarCheck className="w-3.5 h-3.5 stroke-[2.5]" />
+                </div>
+                <span className="text-[11px] font-extrabold tracking-tight text-[#163B32]">Bulk Entry</span>
+              </button>
+            </div>
+
+            {/* 4. Search & Filter Bar Section */}
+            <div className="flex items-center gap-2">
+              {/* Search Box */}
+              <div className="flex-1 rounded-full px-3.5 py-2 flex items-center gap-2 shadow-xs bg-white border border-[#D6E9E1]">
+                <Search className="w-4 h-4 text-[#55756D] shrink-0" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search entries..."
+                  className="w-full text-xs font-semibold text-[#163B32] placeholder:text-[#7A8C84] outline-none bg-transparent"
+                />
+                {searchQuery && (
+                  <button onClick={() => setSearchQuery('')} className="p-0.5 text-[#55756D] hover:text-[#163B32]">
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+
+              {/* Secondary Adjustments: Filter Sliders Button */}
+              <button
+                onClick={() => setShowFilterDrawer(!showFilterDrawer)}
+                className={`w-9 h-9 rounded-full flex items-center justify-center shadow-xs transition-all cursor-pointer shrink-0 border border-[#D6E9E1] ${
+                  shiftFilter !== 'all' 
+                    ? 'bg-[#0B8F68] text-white border-[#0B8F68]' 
+                    : 'bg-white text-[#55756D] hover:text-[#163B32]'
+                }`}
+                title="Filter Shift"
+              >
+                <SlidersHorizontal className="w-4 h-4 stroke-[2.2]" />
+              </button>
+
+              {/* Action Alert Box: Bold Red PAYMENT REMINDER button */}
+              <button
+                onClick={handlePaymentReminder}
+                className="bg-rose-50 hover:bg-rose-100 text-[#E5485D] border border-rose-200 px-3 py-2 rounded-full text-[11px] font-black tracking-tight shrink-0 shadow-xs transition-all cursor-pointer flex items-center gap-1"
+              >
+                <span>PAYMENT REMINDER</span>
+              </button>
+            </div>
+
+            {/* Shift Filter Quick Toggle Pill row when toggled */}
+            {showFilterDrawer && (
+              <div className="glass-card rounded-2xl p-2.5 border border-[#D6E9E1] shadow-xs flex items-center justify-between text-xs font-bold animate-in fade-in">
+                <span className="text-[#163B32]">Filter Shift:</span>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => setShiftFilter('all')}
+                    className={`px-2.5 py-1 rounded-full text-xs transition-colors ${
+                      shiftFilter === 'all' ? 'bg-[#0B8F68] text-white' : 'text-[#55756D] hover:bg-slate-100'
+                    }`}
+                  >
+                    All
+                  </button>
+                  <button
+                    onClick={() => setShiftFilter('morning')}
+                    className={`px-2.5 py-1 rounded-full text-xs transition-colors ${
+                      shiftFilter === 'morning' ? 'bg-[#0B8F68] text-white' : 'text-[#55756D] hover:bg-slate-100'
+                    }`}
+                  >
+                    Morning
+                  </button>
+                  <button
+                    onClick={() => setShiftFilter('evening')}
+                    className={`px-2.5 py-1 rounded-full text-xs transition-colors ${
+                      shiftFilter === 'evening' ? 'bg-[#0B8F68] text-white' : 'text-[#55756D] hover:bg-slate-100'
+                    }`}
+                  >
+                    Evening
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* 5. "October 2026" Daily Collection Entry Log Checklist */}
+            <div className="space-y-2 pt-1">
+              {/* Sub-heading: Date frame group and volume counters */}
+              <div className="flex items-center justify-between px-1">
+                <h2 className="text-sm font-black text-[#163B32] tracking-tight">
+                  {activeMonthDisplay}
+                </h2>
+                <span className="bg-[#E1F3EA] text-[#0B8F68] font-extrabold text-[11px] px-2.5 py-0.5 rounded-full border border-[#D6E9E1]">
+                  {displayedEntries.length} {displayedEntries.length === 1 ? 'Entry' : 'Entries'}
+                </span>
+              </div>
+
+              {/* Item Rows */}
+              {displayedEntries.length === 0 ? (
+                <div className="glass-card rounded-3xl p-8 text-center border border-[#D6E9E1]">
+                  <Package className="w-8 h-8 text-[#7A8C84] mx-auto mb-2" />
+                  <p className="text-xs font-bold text-[#163B32]">No collection entries for this period</p>
+                  <p className="text-[11px] text-[#55756D] mt-1">Tap "+ Add Entry" below to record milk</p>
+                </div>
+              ) : (
+                displayedEntries.map((entry) => {
+                  const isMorning = entry.shift === 'morning';
+                  const dateParts = entry.date.split('-');
+                  const dayStr = dateParts[2] || '01';
+                  const monthShort = activeMonthDisplay.split(' ')[0].substring(0, 3);
+                  const displayDateStr = `${dayStr} ${monthShort}`;
+
+                  return (
+                    <div
+                      key={entry.id}
+                      className="glass-card rounded-2xl p-3 border border-[#D6E9E1] shadow-xs space-y-2.5 hover:bg-slate-50 transition-all cursor-pointer group"
+                    >
+                      {/* Top Row: Left Product Block, Central Timeline, Right Amount - Clickable to Edit Entry */}
+                      <div 
+                        onClick={() => setEditingEntry(entry)}
+                        className="flex items-center justify-between gap-2"
+                        title="Tap to edit this transaction"
+                      >
+                        {/* Left Column Product Block */}
+                        <div className="bg-[#E1F3EA] rounded-xl px-2.5 py-1.5 text-center border border-[#D6E9E1] min-w-[76px] shrink-0">
+                          <span className="text-xs font-black text-[#163B32] block leading-tight">
+                            {entry.liters} Ltr
+                          </span>
+                          <span className="text-[10px] font-semibold text-[#55756D] block leading-tight mt-0.5">
+                            📦 Other
+                          </span>
+                          <span className="text-[10px] font-bold text-[#0B8F68] block leading-tight mt-0.5">
+                            Rs{entry.ratePerLiter}/L
+                          </span>
+                        </div>
+
+                        {/* Central Column Timeline Block */}
+                        <div className="flex-1 min-w-0 px-1">
+                          <div className="font-extrabold text-sm text-[#163B32] tracking-tight group-hover:text-[#0B8F68] transition-colors">
+                            {displayDateStr} <span className="text-[#D6E9E1] font-normal">|</span> <span className="text-xs text-[#55756D] font-medium">{entry.timestamp}</span>
+                          </div>
+
+                          <div className="mt-1 flex items-center">
+                            {isMorning ? (
+                              <span className="bg-amber-50 border border-amber-200 text-amber-800 px-2 py-0.5 rounded-full text-[10px] font-black flex items-center gap-1">
+                                <Sun className="w-3 h-3 text-amber-500 fill-amber-500" />
+                                <span>Morning</span>
+                              </span>
+                            ) : (
+                              <span className="bg-indigo-50 border border-indigo-200 text-indigo-800 px-2 py-0.5 rounded-full text-[10px] font-black flex items-center gap-1">
+                                <Moon className="w-3 h-3 text-indigo-500 fill-indigo-500" />
+                                <span>Evening</span>
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Right Column Financial Metrics */}
+                        <div className="text-right shrink-0">
+                          <span className="text-base font-black text-[#163B32] tracking-tight block">
+                            Rs{Math.round(entry.totalAmount)}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Bottom Action Ribbon: [Print] [Share] */}
+                      <div className="grid grid-cols-2 gap-2 pt-2 border-t border-[#D6E9E1]">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handlePrintRow(entry);
+                          }}
+                          className="py-1.5 px-2 rounded-xl bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-[#163B32] text-xs font-black border border-[#D6E9E1] flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                        >
+                          <Printer className="w-3.5 h-3.5 stroke-[2.5]" />
+                          <span>Print</span>
+                        </button>
+
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleShareRow(entry);
+                          }}
+                          className="py-1.5 px-2 rounded-xl bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-[#163B32] text-xs font-black border border-[#D6E9E1] flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                        >
+                          <Share2 className="w-3.5 h-3.5 stroke-[2.5]" />
+                          <span>Share</span>
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+          </div>
+        </div>
+
+        {/* ========================================================================= */}
+        {/* 6. STICKY FLOATING ACTION BUTTON (FAB)                                    */}
+        {/* ========================================================================= */}
+        <div className="absolute bottom-5 right-5 z-40">
+          <button
+            onClick={() => setShowAddEntryModal(true)}
+            className="bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-500 hover:to-emerald-600 active:bg-emerald-900 text-white rounded-full px-5 py-3 font-black text-xs tracking-wide shadow-xl shadow-emerald-950/50 flex items-center gap-2 transition-all cursor-pointer group active:scale-95 border border-emerald-400/40 ring-4 ring-emerald-950/40 text-glass-lift"
+            title="Add New Milk Collection Entry"
+          >
+            <Plus className="w-4 h-4 stroke-[3] group-hover:rotate-90 transition-transform" />
+            <span>+ Add Entry</span>
+          </button>
+        </div>
+
+        {/* ========================================================================= */}
+        {/* UNIFIED ADD ENTRY SCREEN                                                  */}
+        {/* ========================================================================= */}
+        {showAddEntryModal && (
+          <AddEntryScreen
+            customer={activeContact}
+            source="customer-ledger"
+            existingEntries={entries}
+            onClose={() => setShowAddEntryModal(false)}
+            onSave={(entry) => {
+              if (onSaveNewEntry) onSaveNewEntry(entry);
+              setShowAddEntryModal(false);
+            }}
+            showToast={triggerToast}
+          />
+        )}
+
+        {/* ========================================================================= */}
+        {/* MODAL 2: RECEIVE PAYMENT                                                  */}
+        {/* ========================================================================= */}
+        {showReceiveModal && (
+          <CustomerReceivePaymentModal
+            contact={activeContact}
+            currentOutstanding={metrics.totalOutstanding}
+            currentMonthDue={metrics.due}
+            currentMonthKey={currentMonthKey}
+            onClose={() => setShowReceiveModal(false)}
+            onSavePayment={handleSavePayment}
+          />
+        )}
+
+        {/* ========================================================================= */}
+        {/* MODAL 3: EDIT RATE                                                        */}
+        {/* ========================================================================= */}
+        {showRateEditModal && (
+          <div 
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in"
+            onClick={() => setShowRateEditModal(false)}
+          >
+            <div 
+              className="w-full max-w-sm bg-white rounded-3xl p-5 shadow-2xl space-y-4"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <div className="flex items-center gap-2">
+                  <Edit2 className="w-4 h-4 text-[#1E5631]" />
+                  <h3 className="font-extrabold text-sm text-slate-900">
+                    Edit Price Setting
+                  </h3>
+                </div>
+                <button onClick={() => setShowRateEditModal(false)} className="text-slate-400 hover:text-slate-600">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Agreed Rate (Rs. / Liter)
+                </label>
+                <input
+                  type="number"
+                  step="0.5"
+                  value={newRate}
+                  onChange={(e) => setNewRate(parseFloat(e.target.value) || 0)}
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 font-black text-base text-slate-900 focus:border-[#1E5631] outline-none"
+                />
+              </div>
+
+              <button
+                onClick={handleSaveRate}
+                className="w-full py-3 bg-[#1E5631] hover:bg-emerald-800 text-white rounded-xl font-black text-xs shadow-md transition-all cursor-pointer"
+              >
+                Update Price
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ========================================================================= */}
+        {/* MODAL 4: BULK ENTRY BATCH DIALOG (Reference Screenshot 2)                 */}
+        {/* ========================================================================= */}
+        {showBulkModal && (
+          <BulkEntryModal
+            contact={activeContact}
+            entries={entries}
+            initialMonthKey={currentMonthKey}
+            onClose={() => setShowBulkModal(false)}
+            onSaveEntries={(bulkEntries) => {
+              if (onSaveBulkEntries) {
+                onSaveBulkEntries(bulkEntries);
+              } else if (onSaveNewEntry) {
+                bulkEntries.forEach((e) => onSaveNewEntry(e));
+              }
+              setShowBulkModal(false);
+            }}
+            showToast={triggerToast}
+          />
+        )}
+
+        {/* ========================================================================= */}
+        {/* MODAL 5: PAYMENT HISTORY SUMMARY                                         */}
+        {/* ========================================================================= */}
+        {showPaymentHistory && (
+          <CustomerPaymentHistoryModal
+            contact={activeContact}
+            entries={entries}
+            paymentRecords={customerPayments}
+            currentMonthKey={currentMonthKey}
+            onClose={() => setShowPaymentHistory(false)}
+          />
+        )}
+
+        {/* ========================================================================= */}
+        {/* MODAL 6: SHARE STATEMENT & RECEIPT                                       */}
+        {/* ========================================================================= */}
+        {showShareModal && (
+          <CustomerShareReceiptModal
+            contact={activeContact}
+            entries={entries}
+            paymentRecords={customerPayments}
+            metrics={metrics}
+            activeMonthDisplay={activeMonthDisplay}
+            businessSettings={businessSettings}
+            onClose={() => setShowShareModal(false)}
+            showToast={triggerToast}
+          />
+        )}
+
+        {/* Select Report Period Modal Bottom Sheet */}
+        {showReportPeriodSheet && (
+          <ReportPeriodBottomSheet
+            contact={activeContact}
+            entries={entries}
+            paymentRecords={customerPayments}
+            currentMonthKey={currentMonthKey}
+            activeMonthDisplay={activeMonthDisplay}
+            businessSettings={businessSettings}
+            isPremium={isPremium}
+            onOpenPremium={onOpenPremium}
+            onClose={() => setShowReportPeriodSheet(false)}
+            showToast={triggerToast}
+          />
+        )}
+
+        {/* Modal 7: Delete Customer Confirmation Dialog */}
+        {showDeleteConfirm && (
+          <div 
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in select-none"
+            onClick={() => setShowDeleteConfirm(false)}
+          >
+            <div 
+              className="w-full max-w-sm bg-white rounded-3xl p-5 shadow-2xl space-y-4 border border-rose-100"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center gap-2.5 text-rose-600">
+                <div className="w-9 h-9 rounded-full bg-rose-100 flex items-center justify-center shrink-0">
+                  <AlertTriangle className="w-5 h-5 text-rose-600" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-sm text-slate-900 leading-tight">
+                    Delete {activeContact.name}?
+                  </h3>
+                  <p className="text-[11px] text-slate-500 font-medium">
+                    This action cannot be undone
+                  </p>
+                </div>
+              </div>
+
+              <div className="space-y-2 text-xs text-slate-600 leading-relaxed">
+                <p>
+                  Delete <span className="font-bold text-slate-800">{activeContact.name}</span>? This will remove all their entries, payments, and history. This cannot be undone.
+                </p>
+
+                {metrics.totalOutstanding > 0 && (
+                  <div className="p-2.5 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-xs font-bold flex items-start gap-1.5">
+                    <span className="shrink-0">⚠️</span>
+                    <span>
+                      This customer has an outstanding balance of {formatPKR(metrics.totalOutstanding)}. Delete anyway?
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2.5 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setShowDeleteConfirm(false)}
+                  className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-700 rounded-xl text-xs font-bold transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowDeleteConfirm(false);
+                    if (onDeleteContact) {
+                      onDeleteContact(activeContact.id);
+                    }
+                  }}
+                  className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-white rounded-xl text-xs font-black shadow-sm transition-colors cursor-pointer"
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Toast Alert */}
+        {showToast && (
+          <div className="fixed bottom-20 left-1/2 -translate-x-1/2 bg-slate-900/90 text-white text-xs font-bold px-4 py-2 rounded-full shadow-lg z-50 animate-in fade-in slide-in-from-bottom-2">
+            {showToast}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
