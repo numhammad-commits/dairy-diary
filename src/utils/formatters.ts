@@ -14,6 +14,46 @@ export function formatPKRWithSpace(amount: number): string {
   return `Rs. ${rounded.toLocaleString('en-PK')}`;
 }
 
+export interface ReceiptTextOptions {
+  customerName: string;
+  date: string;
+  milkLiters?: number;
+  ratePerLiter?: number;
+  totalAmount: number;
+  received: number;
+  due: number;
+  previousDue?: number;
+  footerBusinessName?: string;
+}
+
+/**
+ * Beautifully formatted WhatsApp/share-sheet text receipt (emoji + bold/italic markdown),
+ * used in place of a PDF for quick Share actions. All figures are passed in by the caller
+ * from the already-computed getCustomerMonthDue()/metrics values — this never recalculates.
+ */
+export function formatDairyReceiptText(opts: ReceiptTextOptions): string {
+  const lines: string[] = [];
+  lines.push('*DAIRY DIARY RECEIPT* 🥛');
+  lines.push('-------------------------');
+  lines.push(`👤 *Customer:* ${opts.customerName}`);
+  lines.push(`📅 *Date:* ${opts.date}`);
+  if (opts.milkLiters !== undefined) {
+    const rateSuffix = opts.ratePerLiter !== undefined ? ` @ Rs${opts.ratePerLiter.toFixed(1)}/L` : '';
+    lines.push(`📦 *Milk:* ${opts.milkLiters.toFixed(2)} L${rateSuffix}`);
+  }
+  lines.push(`💰 *Total Amount:* ${formatPKR(opts.totalAmount)}`);
+  lines.push(`✅ *Received:* ${formatPKR(opts.received)}`);
+  lines.push(`⚠️ *Remaining Due:* ${formatPKR(opts.due)}`);
+  lines.push('-------------------------');
+  if (opts.previousDue !== undefined && opts.previousDue > 0) {
+    lines.push(`_Previous Balance: ${formatPKR(opts.previousDue)}_`);
+    lines.push('-------------------------');
+  }
+  lines.push('Thank you for your business!');
+  lines.push(`_${opts.footerBusinessName || 'SAWAA'} Dairy Diary_`);
+  return lines.join('\n');
+}
+
 export function formatLiters(liters: number): string {
   if (liters === undefined || liters === null || isNaN(liters)) return '0 L';
   const formatted = Number.isInteger(liters) ? liters.toString() : liters.toFixed(1);

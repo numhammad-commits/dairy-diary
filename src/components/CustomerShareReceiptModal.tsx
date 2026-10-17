@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { ArrowLeft, X, Share2, Download, Eye, Check, FileText, Calendar, Clock, DollarSign, Smartphone, Loader2 } from 'lucide-react';
 import { Contact, LedgerEntry, PaymentRecord, BusinessSettings } from '../types/dairy';
-import { formatPKR, formatLiters, getDeviceTodayDate } from '../utils/formatters';
+import { formatPKR, formatLiters, getDeviceTodayDate, formatDairyReceiptText } from '../utils/formatters';
 import { generateSawaaPdfDocument } from '../utils/pdfGenerator';
 import { SawaaLogo } from './SawaaLogo';
 
@@ -64,32 +64,35 @@ export const CustomerShareReceiptModal: React.FC<CustomerShareReceiptModalProps>
     });
   }, []);
 
-  // Text message payload for sharing
+  // Text message payload for sharing — the beautifully formatted emoji receipt, built
+  // straight from the already-computed metrics (never recalculated here).
   const shareTextPayload = useMemo(() => {
     if (activeTab === 'due') {
-      return `*${businessName} — Due Statement*\n\n` +
-        `Customer: *${contact.name}*\n` +
-        `Billing Period: *${activeMonthDisplay}*\n` +
-        `Date: ${currentTodayStr} | ${currentTimeStr}\n\n` +
-        `🥛 Milk Delivered: ${formatLiters(metrics.milk)}\n` +
-        `💵 Month Bill: ${formatPKR(metrics.amount)}\n` +
-        `✅ Month Received: ${formatPKR(metrics.received)}\n` +
-        `📌 Month Balance: ${formatPKR(metrics.due)}\n` +
-        `↺ Previous Due: ${formatPKR(metrics.previousDue)}\n` +
-        `-------------------------\n` +
-        `*TOTAL OUTSTANDING: ${formatPKR(metrics.totalOutstanding)}*\n\n` +
-        `Thank you — ${businessName}`;
+      return formatDairyReceiptText({
+        customerName: contact.name,
+        date: `${currentTodayStr}, ${currentTimeStr}`,
+        milkLiters: metrics.milk,
+        ratePerLiter: metrics.milk > 0 ? metrics.amount / metrics.milk : undefined,
+        totalAmount: metrics.amount,
+        received: metrics.received,
+        due: metrics.due,
+        previousDue: metrics.previousDue,
+        footerBusinessName: businessName,
+      });
     } else {
       const amt = latestPayment ? latestPayment.amount : metrics.received;
       const pDate = latestPayment ? latestPayment.date : currentTodayStr;
       const pMethod = latestPayment?.paymentMethod || 'Cash';
-      return `*${businessName} — Payment Receipt*\n\n` +
-        `Customer: *${contact.name}*\n` +
-        `Receipt Date: ${pDate}\n` +
-        `Payment Method: ${pMethod}\n\n` +
-        `✅ Amount Received: ${formatPKR(amt)}\n` +
-        `📌 Remaining Outstanding: ${formatPKR(metrics.totalOutstanding)}\n\n` +
-        `Thank you — ${businessName}`;
+      return `*DAIRY DIARY — PAYMENT RECEIPT* 🧾\n` +
+        `-------------------------\n` +
+        `👤 *Customer:* ${contact.name}\n` +
+        `📅 *Date:* ${pDate}\n` +
+        `💳 *Method:* ${pMethod}\n` +
+        `✅ *Amount Received:* ${formatPKR(amt)}\n` +
+        `⚠️ *Remaining Due:* ${formatPKR(metrics.totalOutstanding)}\n` +
+        `-------------------------\n` +
+        `Thank you for your business!\n` +
+        `_${businessName} Dairy Diary_`;
     }
   }, [activeTab, businessName, contact.name, activeMonthDisplay, currentTodayStr, currentTimeStr, metrics, latestPayment]);
 
@@ -116,19 +119,15 @@ export const CustomerShareReceiptModal: React.FC<CustomerShareReceiptModalProps>
     );
   };
 
-  // Handle Share: generate the PDF receipt and attach it via the native share sheet
-  // (Web Share API Level 2). Falls back to downloading the PDF + opening WhatsApp with
-  // the text summary when file sharing isn't supported, and to text-only WhatsApp if
-  // PDF generation itself fails.
+  // Handle Share: send the beautifully formatted text receipt via the native share sheet
+  // (text only, no file attached), falling back to WhatsApp with the same text when the
+  // Web Share API isn't available.
   const handleShare = async () => {
     setIsSharing(true);
     try {
-      const pdf = await buildReceiptPdf();
-
-      if (navigator.share && navigator.canShare && navigator.canShare({ files: [pdf.file] })) {
+      if (navigator.share) {
         try {
           await navigator.share({
-            files: [pdf.file],
             title: `${businessName} Receipt - ${contact.name}`,
             text: shareTextPayload,
           });
@@ -136,22 +135,10 @@ export const CustomerShareReceiptModal: React.FC<CustomerShareReceiptModalProps>
           return;
         } catch (err: any) {
           if (err?.name === 'AbortError') return; // user cancelled the native share sheet
-          // otherwise fall through to the download + WhatsApp fallback below
+          // otherwise fall through to the WhatsApp fallback below
         }
       }
 
-      // Fallback: download the PDF so it's ready on-device, then open WhatsApp with the text
-      const link = document.createElement('a');
-      link.href = pdf.url;
-      link.download = pdf.filename;
-      link.click();
-
-      const cleanPhone = contact.phone.replace(/[^0-9]/g, '');
-      window.open(`https://wa.me/${cleanPhone}?text=${encodeURIComponent(shareTextPayload)}`, '_blank');
-      if (showToast) showToast('PDF downloaded — opening WhatsApp');
-    } catch (err) {
-      console.error('Share receipt error:', err);
-      // Last resort if PDF generation itself fails: original text-only behavior
       const cleanPhone = contact.phone.replace(/[^0-9]/g, '');
       window.open(`https://wa.me/${cleanPhone}?text=${encodeURIComponent(shareTextPayload)}`, '_blank');
       if (showToast) showToast('Receipt opened in WhatsApp');

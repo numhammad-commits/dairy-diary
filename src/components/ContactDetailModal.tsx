@@ -27,7 +27,7 @@ import {
   Trash2
 } from 'lucide-react';
 import { Contact, LedgerEntry, ShiftType, MilkType, BusinessSettings, PaymentRecord } from '../types/dairy';
-import { formatPKR, formatLiters, getMonthDisplay, shiftMonthKey, generateWhatsAppMessage, getDeviceTodayDate, getDeviceCurrentMonthKey } from '../utils/formatters';
+import { formatPKR, formatLiters, getMonthDisplay, shiftMonthKey, generateWhatsAppMessage, getDeviceTodayDate, getDeviceCurrentMonthKey, formatDairyReceiptText } from '../utils/formatters';
 import { getCustomerMonthDue } from '../utils/calculations';
 import { generateSawaaPdfDocument } from '../utils/pdfGenerator';
 import { EditCustomerScreen } from './EditCustomerScreen';
@@ -278,34 +278,33 @@ export const ContactDetailModal: React.FC<ContactDetailModalProps> = ({
     }
   };
 
+  // Payment Reminder: a formatted text nudge (not a line-item receipt), shared directly
+  // as text — no PDF attached.
   const handlePaymentReminder = async () => {
-    const text = `*Dairy Diary - Payment Reminder*\n\nDear *${contact.name}*,\nYour active milk bill for *${activeMonthDisplay}* is *${formatPKR(metrics.due)}*.\nIncludes previous balance: *${formatPKR(metrics.previousDue)}*.\n*Total Outstanding Due: ${formatPKR(metrics.totalOutstanding)}*.\n\nPlease clear your ledger account at your earliest convenience.\nAl-Madina Dairy Center · +92 301 5541290`;
-    try {
-      const pdf = await buildStatementPdf();
-      if (navigator.share && navigator.canShare && navigator.canShare({ files: [pdf.file] })) {
-        try {
-          await navigator.share({
-            files: [pdf.file],
-            title: `Payment Reminder — ${contact.name}`,
-            text,
-          });
-          triggerToast('Payment Reminder shared');
-          return;
-        } catch (err: any) {
-          if (err?.name === 'AbortError') return;
-        }
+    const text =
+      `*DAIRY DIARY — PAYMENT REMINDER* 🔔\n` +
+      `-------------------------\n` +
+      `👤 *Customer:* ${contact.name}\n` +
+      `📅 *Billing Period:* ${activeMonthDisplay}\n` +
+      `💰 *Month Bill:* ${formatPKR(metrics.due)}\n` +
+      `⚠️ *Previous Balance:* ${formatPKR(metrics.previousDue)}\n` +
+      `-------------------------\n` +
+      `*Total Outstanding Due: ${formatPKR(metrics.totalOutstanding)}*\n` +
+      `-------------------------\n` +
+      `Please clear your ledger account at your earliest convenience.\n` +
+      `_${businessSettings?.businessName || 'SAWAA'} Dairy Diary_`;
+
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: `Payment Reminder — ${contact.name}`, text });
+        triggerToast('Payment Reminder shared');
+        return;
+      } catch (err: any) {
+        if (err?.name === 'AbortError') return;
       }
-      const downloadLink = document.createElement('a');
-      downloadLink.href = pdf.url;
-      downloadLink.download = pdf.filename;
-      downloadLink.click();
-      window.open(`https://wa.me/${contact.phone.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(text)}`, '_blank');
-      triggerToast('Payment Reminder sent via WhatsApp');
-    } catch (err) {
-      console.error('Payment reminder share error:', err);
-      window.open(`https://wa.me/${contact.phone.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(text)}`, '_blank');
-      triggerToast('Payment Reminder sent via WhatsApp');
     }
+    window.open(`https://wa.me/${contact.phone.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(text)}`, '_blank');
+    triggerToast('Payment Reminder sent via WhatsApp');
   };
 
   const handleDownloadPDF = () => {
@@ -318,46 +317,31 @@ export const ContactDetailModal: React.FC<ContactDetailModalProps> = ({
     window.print();
   };
 
-  // Single-entry receipt share: builds a one-off PDF for just this delivery.
+  // Single-entry receipt share: the beautifully formatted text receipt for just this
+  // delivery — no PDF attached. previousDue is the customer's real running balance
+  // (from metrics), shown for context alongside this one entry's own due.
   const handleShareRow = async (entry: LedgerEntry) => {
-    const text = `*Milk Receipt - Dairy Diary*\nDate: ${entry.date} | ${entry.timestamp}\nShift: ${entry.shift.toUpperCase()}\nQuantity: ${entry.liters} L @ Rs${entry.ratePerLiter}/L\nTotal: Rs${entry.totalAmount}\nCustomer: ${contact.name}`;
-    try {
-      const pdf = await generateSawaaPdfDocument(
-        activeContact,
-        [entry],
-        entry.date,
-        businessSettings,
-        {
-          totalMilk: entry.liters,
-          totalAmount: entry.totalAmount,
-          totalReceived: entry.receivedAmount,
-          periodDue: entry.dueAmount,
-          previousDue: 0,
-          totalOutstanding: entry.dueAmount,
-        },
-        isPremium
-      );
-      if (navigator.share && navigator.canShare && navigator.canShare({ files: [pdf.file] })) {
-        try {
-          await navigator.share({
-            files: [pdf.file],
-            title: `Milk Receipt — ${contact.name} — ${entry.date}`,
-            text,
-          });
-          return;
-        } catch (err: any) {
-          if (err?.name === 'AbortError') return;
-        }
+    const text = formatDairyReceiptText({
+      customerName: contact.name,
+      date: `${entry.date}, ${entry.timestamp}`,
+      milkLiters: entry.liters,
+      ratePerLiter: entry.ratePerLiter,
+      totalAmount: entry.totalAmount,
+      received: entry.receivedAmount,
+      due: entry.dueAmount,
+      previousDue: metrics.previousDue,
+      footerBusinessName: businessSettings?.businessName,
+    });
+
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: `Milk Receipt — ${contact.name} — ${entry.date}`, text });
+        return;
+      } catch (err: any) {
+        if (err?.name === 'AbortError') return;
       }
-      const downloadLink = document.createElement('a');
-      downloadLink.href = pdf.url;
-      downloadLink.download = pdf.filename;
-      downloadLink.click();
-      window.open(`https://wa.me/${contact.phone.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(text)}`, '_blank');
-    } catch (err) {
-      console.error('Row receipt share error:', err);
-      window.open(`https://wa.me/${contact.phone.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(text)}`, '_blank');
     }
+    window.open(`https://wa.me/${contact.phone.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(text)}`, '_blank');
   };
 
   const handleSavePayment = (data: {
