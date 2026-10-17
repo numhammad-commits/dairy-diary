@@ -84,7 +84,7 @@ export const ReceiptTemplate = React.forwardRef<HTMLDivElement, ReceiptTemplateP
       >
         {/* 1. Header: app's dark green theme, real logo, business name, phone/address */}
         <div style={{ backgroundColor: '#006B52' }} className="px-5 pt-5 pb-4">
-          <div className="flex items-center gap-3">
+          <div className="flex items-start gap-3">
             <div
               style={{ backgroundColor: '#ffffff' }}
               className="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 overflow-hidden"
@@ -95,7 +95,10 @@ export const ReceiptTemplate = React.forwardRef<HTMLDivElement, ReceiptTemplateP
                 <SawaaLogo variant="icon" size="md" theme="color" />
               )}
             </div>
-            <h1 style={{ color: '#ffffff', fontSize: '20px' }} className="font-black tracking-tight truncate">
+            <h1
+              style={{ color: '#ffffff', fontSize: '20px', lineHeight: 1.15 }}
+              className="font-black tracking-tight flex-1 min-w-0 break-words"
+            >
               {businessName.toUpperCase()}
             </h1>
           </div>
