@@ -1,7 +1,7 @@
 import React, { useRef, useState } from 'react';
-import { X, Cloud, Download, Upload, AlertCircle, Mail, ChevronDown, ChevronUp } from 'lucide-react';
+import { X, Cloud, Download, Upload, AlertCircle, Mail, CheckCircle2, ChevronDown, ChevronUp } from 'lucide-react';
 import { Contact, LedgerEntry, ExpenseItem } from '../types/dairy';
-import { exportFullDatabase, restoreFullDatabase } from '../utils/storage';
+import { exportFullDatabase, restoreFullDatabase, loadPersistedSettings } from '../utils/storage';
 import { getDeviceTodayDate } from '../utils/formatters';
 
 interface BackupModalProps {
@@ -28,6 +28,8 @@ export const BackupModal: React.FC<BackupModalProps> = ({
   const [autoBackupEnabled, setAutoBackupEnabled] = useState(false);
   const [backupFrequency, setBackupFrequency] = useState<BackupFrequency>('daily');
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [businessSettings] = useState(() => loadPersistedSettings());
+  const savedEmail = businessSettings.email?.trim();
 
   // Real JSON Export
   const handleExportJSON = () => {
@@ -41,7 +43,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    if (showToast) showToast('Backup file downloaded successfully');
+    if (showToast) showToast('Backup saved to device successfully');
   };
 
   // Real JSON Restore
@@ -73,7 +75,13 @@ export const BackupModal: React.FC<BackupModalProps> = ({
   };
 
   const handleConnectGoogle = () => {
-    if (showToast) showToast('Google Sign-In coming soon');
+    if (showToast) {
+      showToast(
+        savedEmail
+          ? 'Update your email in Settings → Business Profile'
+          : 'Add your email in Settings → Business Profile to connect'
+      );
+    }
   };
 
   const frequencyOptions: { value: BackupFrequency; label: string }[] = [
@@ -112,7 +120,14 @@ export const BackupModal: React.FC<BackupModalProps> = ({
               </div>
               <div className="min-w-0">
                 <h4 className="text-sm font-bold text-[#163B32]">Google Account</h4>
-                <p className="text-xs text-[#55756D] truncate">Not Connected</p>
+                {savedEmail ? (
+                  <p className="text-xs text-[#0B8F68] font-semibold truncate flex items-center gap-1">
+                    <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                    <span className="truncate">{savedEmail}</span>
+                  </p>
+                ) : (
+                  <p className="text-xs text-[#55756D] truncate">Not Connected</p>
+                )}
               </div>
             </div>
             <button
@@ -120,7 +135,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
               onClick={handleConnectGoogle}
               className="px-3.5 py-2 bg-white border border-[#0B8F68] text-[#0B8F68] text-xs font-extrabold rounded-xl hover:bg-[#E1F3EA] transition-colors cursor-pointer shrink-0"
             >
-              Connect
+              {savedEmail ? 'Change' : 'Connect'}
             </button>
           </div>
 
