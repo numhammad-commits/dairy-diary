@@ -22,6 +22,7 @@ export interface Contact {
   totalLifetimeDue: number; // Cumulative historical debt
   currentMonthDue: number;  // Current month's balance
   avatarColor: string;
+  avatarImage?: string; // Base64 data URL of an uploaded profile photo (compressed, square-cropped)
   status: 'active' | 'inactive';
   lastActivityTimestamp: string; // e.g. "Today, 07:13 AM" or "01 Oct, 11:38 AM"
   lastActivityIso: string;

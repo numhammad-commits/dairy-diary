@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { 
   ArrowLeft, 
   Edit3, 
@@ -48,7 +48,8 @@ export const AddUserView: React.FC<AddUserViewProps> = ({
   // Form States
   const [isActive, setIsActive] = useState<boolean>(true);
   const [milkType, setMilkType] = useState<'buffalo' | 'cow' | 'other' | 'goat'>('buffalo');
-  const [dpSelected, setDpSelected] = useState<boolean>(false);
+  const [avatarImage, setAvatarImage] = useState<string | undefined>(undefined);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [name, setName] = useState<string>('');
   const [phone, setPhone] = useState<string>('');
   const [address, setAddress] = useState<string>('');
@@ -187,6 +188,45 @@ export const AddUserView: React.FC<AddUserViewProps> = ({
     }
   };
 
+  // Reads a selected file, center-crops it to a square, and downsizes it to a small
+  // JPEG data URL so a photo never bloats localStorage.
+  function fileToCompressedDataUrl(file: File, maxDim = 240, quality = 0.72): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(reader.error);
+      reader.onload = () => {
+        const img = new Image();
+        img.onerror = () => reject(new Error('Could not load image'));
+        img.onload = () => {
+          const side = Math.min(img.width, img.height);
+          const sx = (img.width - side) / 2;
+          const sy = (img.height - side) / 2;
+          const canvas = document.createElement('canvas');
+          canvas.width = maxDim;
+          canvas.height = maxDim;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) { reject(new Error('Canvas not supported')); return; }
+          ctx.drawImage(img, sx, sy, side, side, 0, 0, maxDim, maxDim);
+          resolve(canvas.toDataURL('image/jpeg', quality));
+        };
+        img.src = reader.result as string;
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  const handleAvatarFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      setAvatarImage(await fileToCompressedDataUrl(file));
+    } catch (err) {
+      console.error('Avatar upload failed:', err);
+    } finally {
+      e.target.value = '';
+    }
+  };
+
   // Form submission handler
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -220,6 +260,7 @@ export const AddUserView: React.FC<AddUserViewProps> = ({
         morningQuotaLiters: parsedQty,
         eveningQuotaLiters: parsedQty,
         avatarColor: 'bg-[#1E5631]',
+        avatarImage: avatarImage || undefined,
         status: isActive ? 'active' : 'inactive',
         milkTypePref: milkType,
         billCycle: billCycle.toLowerCase() as any,
@@ -353,14 +394,19 @@ export const AddUserView: React.FC<AddUserViewProps> = ({
             
             {/* Avatar / Camera */}
             <div className="flex flex-col items-center justify-center pt-1 pb-1">
-              <div 
-                onClick={() => setDpSelected(!dpSelected)}
-                className="w-20 h-20 rounded-full border-2 border-dashed border-[#D6E9E1] bg-white flex flex-col items-center justify-center text-[#0B8F68] cursor-pointer hover:bg-slate-50 transition-all relative group shadow-xs"
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={handleAvatarFileChange}
+              />
+              <div
+                onClick={() => fileInputRef.current?.click()}
+                className="w-20 h-20 rounded-full border-2 border-dashed border-[#D6E9E1] bg-white flex flex-col items-center justify-center text-[#0B8F68] cursor-pointer hover:bg-slate-50 transition-all relative group shadow-xs overflow-hidden"
               >
-                {dpSelected ? (
-                  <div className="w-full h-full rounded-full bg-[#E1F3EA] text-[#0B8F68] flex items-center justify-center font-black text-2xl border border-[#D6E9E1]">
-                    {name ? name.substring(0, 2).toUpperCase() : 'DD'}
-                  </div>
+                {avatarImage ? (
+                  <img src={avatarImage} alt="Profile" className="w-full h-full object-cover rounded-full" />
                 ) : (
                   <>
                     <Camera className="w-7 h-7 text-[#0B8F68] group-hover:scale-110 transition-transform" />

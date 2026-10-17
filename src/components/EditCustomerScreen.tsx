@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { 
   ArrowLeft, 
   User, 
@@ -82,6 +82,8 @@ export const EditCustomerScreen: React.FC<EditCustomerScreenProps> = ({
   const [baseFat, setBaseFat] = useState<string>(initialData.baseFat);
   const [fatRate, setFatRate] = useState<string>(initialData.fatRate);
   const [formulaFactor, setFormulaFactor] = useState<string>(initialData.formulaFactor);
+  const [avatarImage, setAvatarImage] = useState<string | undefined>(contact.avatarImage);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Delivery Location / GPS State
   const [area, setArea] = useState<string>(contact.area || '');
@@ -109,6 +111,45 @@ export const EditCustomerScreen: React.FC<EditCustomerScreenProps> = ({
       },
       { enableHighAccuracy: true, timeout: 10000 }
     );
+  };
+
+  // Reads a selected file, center-crops it to a square, and downsizes it to a small
+  // JPEG data URL so a photo never bloats localStorage.
+  function fileToCompressedDataUrl(file: File, maxDim = 240, quality = 0.72): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(reader.error);
+      reader.onload = () => {
+        const img = new Image();
+        img.onerror = () => reject(new Error('Could not load image'));
+        img.onload = () => {
+          const side = Math.min(img.width, img.height);
+          const sx = (img.width - side) / 2;
+          const sy = (img.height - side) / 2;
+          const canvas = document.createElement('canvas');
+          canvas.width = maxDim;
+          canvas.height = maxDim;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) { reject(new Error('Canvas not supported')); return; }
+          ctx.drawImage(img, sx, sy, side, side, 0, 0, maxDim, maxDim);
+          resolve(canvas.toDataURL('image/jpeg', quality));
+        };
+        img.src = reader.result as string;
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  const handleAvatarFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      setAvatarImage(await fileToCompressedDataUrl(file));
+    } catch (err) {
+      console.error('Avatar upload failed:', err);
+    } finally {
+      e.target.value = '';
+    }
   };
 
   // Unsaved Changes Confirmation Dialog State
@@ -190,6 +231,7 @@ export const EditCustomerScreen: React.FC<EditCustomerScreenProps> = ({
     const updatedContact: Contact = {
       ...contact,
       name: trimmedName,
+      avatarImage: avatarImage || undefined,
       phone: trimmedPhone,
       address: address.trim() || undefined,
       area: area.trim() || undefined,
@@ -327,15 +369,29 @@ export const EditCustomerScreen: React.FC<EditCustomerScreenProps> = ({
           {/* 2. Core Info: Circular Profile Image / DP Node + Stacked Inputs (Name & Phone) */}
           <div className="flex items-center gap-3">
             {/* DP Circular Frame */}
-            <div 
-              className="w-22 h-22 rounded-full border-2 border-[#D6E9E1] bg-white flex flex-col items-center justify-center text-[#0B8F68] cursor-pointer hover:bg-slate-50 active:scale-95 transition-all shrink-0 shadow-xs relative group"
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={handleAvatarFileChange}
+            />
+            <div
+              onClick={() => fileInputRef.current?.click()}
+              className="w-22 h-22 rounded-full border-2 border-[#D6E9E1] bg-white flex flex-col items-center justify-center text-[#0B8F68] cursor-pointer hover:bg-slate-50 active:scale-95 transition-all shrink-0 shadow-xs relative group overflow-hidden"
               title="Change Display Picture"
             >
-              <div className="relative">
-                <Camera className="w-6 h-6 stroke-[2] text-[#0B8F68]" />
-                <Plus className="w-2.5 h-2.5 stroke-[3] absolute -top-1 -right-1 text-[#0B8F68]" />
-              </div>
-              <span className="text-[11px] font-black tracking-tight mt-0.5 text-[#55756D]">DP</span>
+              {avatarImage ? (
+                <img src={avatarImage} alt="Profile" className="w-full h-full object-cover rounded-full" />
+              ) : (
+                <>
+                  <div className="relative">
+                    <Camera className="w-6 h-6 stroke-[2] text-[#0B8F68]" />
+                    <Plus className="w-2.5 h-2.5 stroke-[3] absolute -top-1 -right-1 text-[#0B8F68]" />
+                  </div>
+                  <span className="text-[11px] font-black tracking-tight mt-0.5 text-[#55756D]">DP</span>
+                </>
+              )}
             </div>
 
             {/* Stacked Inputs: Name & Phone */}
