@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { X, Cloud, Download, FileText, CheckCircle2, Upload, AlertCircle, Database } from 'lucide-react';
+import { X, Cloud, Download, Upload, AlertCircle, Mail, ChevronDown, ChevronUp } from 'lucide-react';
 import { Contact, LedgerEntry, ExpenseItem } from '../types/dairy';
 import { exportFullDatabase, restoreFullDatabase } from '../utils/storage';
 import { getDeviceTodayDate } from '../utils/formatters';
@@ -13,6 +13,8 @@ interface BackupModalProps {
   showToast?: (message: string) => void;
 }
 
+type BackupFrequency = 'daily' | '3days' | 'weekly';
+
 export const BackupModal: React.FC<BackupModalProps> = ({
   contacts,
   entries,
@@ -23,6 +25,9 @@ export const BackupModal: React.FC<BackupModalProps> = ({
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [restoreError, setRestoreError] = useState<string | null>(null);
+  const [autoBackupEnabled, setAutoBackupEnabled] = useState(false);
+  const [backupFrequency, setBackupFrequency] = useState<BackupFrequency>('daily');
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   // Real JSON Export
   const handleExportJSON = () => {
@@ -39,46 +44,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
     if (showToast) showToast('Backup file downloaded successfully');
   };
 
-  // Real CSV Export
-  const handleExportCSV = () => {
-    const headers = [
-      'Entry ID',
-      'Contact Name',
-      'Role',
-      'Date',
-      'Shift',
-      'Liters',
-      'Rate/L',
-      'Total Amount',
-      'Received Amount',
-      'Due Amount',
-    ];
-    const rows = entries.map((e) => [
-      e.id,
-      `"${e.contactName.replace(/"/g, '""')}"`,
-      e.contactRole,
-      e.date,
-      e.shift,
-      e.liters,
-      e.ratePerLiter,
-      e.totalAmount,
-      e.receivedAmount,
-      e.dueAmount,
-    ]);
-    const csvContent = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `dairy-diary-ledger-${getDeviceTodayDate()}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    if (showToast) showToast('CSV ledger exported successfully');
-  };
-
-  // Real JSON Restore (Section 14 & 15)
+  // Real JSON Restore
   const handleRestoreFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     setRestoreError(null);
     const file = e.target.files?.[0];
@@ -106,17 +72,27 @@ export const BackupModal: React.FC<BackupModalProps> = ({
     reader.readAsText(file);
   };
 
+  const handleConnectGoogle = () => {
+    if (showToast) showToast('Google Sign-In coming soon');
+  };
+
+  const frequencyOptions: { value: BackupFrequency; label: string }[] = [
+    { value: 'daily', label: 'Daily' },
+    { value: '3days', label: 'Every 3 Days' },
+    { value: 'weekly', label: 'Weekly' },
+  ];
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200 select-none">
-      <div 
+      <div
         className="w-full max-w-md bg-glass-gradient rounded-3xl shadow-2xl overflow-hidden border border-[#D6E9E1] flex flex-col max-h-[90vh]"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
         <div className="bg-[#1B4332] text-white px-5 py-4 flex items-center justify-between border-b border-white/10">
           <div className="flex items-center gap-2.5">
-            <Database className="w-5 h-5 text-white" />
-            <h3 className="font-extrabold text-base tracking-tight text-white">Database Backup &amp; Export</h3>
+            <Cloud className="w-5 h-5 text-white" />
+            <h3 className="font-extrabold text-base tracking-tight text-white">Cloud Backup &amp; Restore</h3>
           </div>
           <button
             onClick={onClose}
@@ -128,42 +104,58 @@ export const BackupModal: React.FC<BackupModalProps> = ({
 
         {/* Body */}
         <div className="p-5 space-y-4 overflow-y-auto text-[#163B32]">
-          {/* Real Storage Status Box (Honest Platform Status, Section 15 & 20) */}
-          <div className="p-4 rounded-2xl glass-card border border-[#D6E9E1] shadow-xs space-y-2">
-            <div className="flex items-start gap-3">
+          {/* Account Section */}
+          <div className="p-4 rounded-2xl glass-card border border-[#D6E9E1] shadow-xs flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3 min-w-0">
               <div className="w-10 h-10 rounded-xl bg-[#E1F3EA] border border-[#D6E9E1] text-[#0B8F68] flex items-center justify-center shrink-0 shadow-inner">
-                <CheckCircle2 className="w-5 h-5 stroke-[2.5]" />
+                <Mail className="w-5 h-5 stroke-[2.5]" />
               </div>
-              <div>
-                <h4 className="text-sm font-bold text-[#163B32]">Local Persistent Storage: Active</h4>
-                <p className="text-xs text-[#55756D] mt-0.5 leading-relaxed">
-                  Your customers, transactions, rates, and accounts are automatically saved to your device's persistent storage on every change.
-                </p>
+              <div className="min-w-0">
+                <h4 className="text-sm font-bold text-[#163B32]">Google Account</h4>
+                <p className="text-xs text-[#55756D] truncate">Not Connected</p>
               </div>
             </div>
-
-            <div className="mt-3 pt-3 border-t border-[#D6E9E1] flex items-center justify-between text-xs font-semibold text-[#55756D]">
-              <span className="flex items-center gap-1.5">
-                <Cloud className="w-3.5 h-3.5 text-[#0B8F68]" />
-                Remote Cloud Sync:
-              </span>
-              <span className="text-slate-500 font-normal">Offline (Local Only)</span>
-            </div>
+            <button
+              type="button"
+              onClick={handleConnectGoogle}
+              className="px-3.5 py-2 bg-white border border-[#0B8F68] text-[#0B8F68] text-xs font-extrabold rounded-xl hover:bg-[#E1F3EA] transition-colors cursor-pointer shrink-0"
+            >
+              Connect
+            </button>
           </div>
 
-          {/* Quick stats on backed up data */}
-          <div className="grid grid-cols-3 gap-2 text-center">
-            <div className="p-2.5 glass-card border border-[#D6E9E1] shadow-xs rounded-xl">
-              <span className="text-[10px] text-[#55756D] font-semibold block uppercase">Customers</span>
-              <span className="text-sm font-black text-[#163B32]">{contacts.length}</span>
+          {/* Auto-Backup Settings */}
+          <div className="p-4 rounded-2xl glass-card border border-[#D6E9E1] shadow-xs space-y-3">
+            <div className="flex items-center justify-between">
+              <h4 className="text-sm font-bold text-[#163B32]">Auto Backup</h4>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={autoBackupEnabled}
+                  onChange={(e) => setAutoBackupEnabled(e.target.checked)}
+                  className="sr-only peer"
+                />
+                <div className="w-11 h-6 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#0B8F68]"></div>
+              </label>
             </div>
-            <div className="p-2.5 glass-card border border-[#D6E9E1] shadow-xs rounded-xl">
-              <span className="text-[10px] text-[#55756D] font-semibold block uppercase">Milk Logs</span>
-              <span className="text-sm font-black text-[#163B32]">{entries.length}</span>
-            </div>
-            <div className="p-2.5 glass-card border border-[#D6E9E1] shadow-xs rounded-xl">
-              <span className="text-[10px] text-[#55756D] font-semibold block uppercase">Expenses</span>
-              <span className="text-sm font-black text-[#163B32]">{expenses.length}</span>
+
+            <div className="flex items-center gap-2 pt-1 border-t border-[#D6E9E1]">
+              {frequencyOptions.map((opt) => (
+                <label
+                  key={opt.value}
+                  className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl border border-[#D6E9E1] text-xs font-bold text-[#163B32] cursor-pointer has-[:checked]:bg-[#E1F3EA] has-[:checked]:border-[#0B8F68] has-[:checked]:text-[#0B8F68] transition-colors"
+                >
+                  <input
+                    type="radio"
+                    name="backupFrequency"
+                    value={opt.value}
+                    checked={backupFrequency === opt.value}
+                    onChange={() => setBackupFrequency(opt.value)}
+                    className="sr-only"
+                  />
+                  {opt.label}
+                </label>
+              ))}
             </div>
           </div>
 
@@ -174,30 +166,16 @@ export const BackupModal: React.FC<BackupModalProps> = ({
             </div>
           )}
 
-          {/* Real Actions */}
-          <div className="space-y-2 pt-1">
-            <h5 className="text-xs font-extrabold uppercase tracking-wider text-[#55756D]">
-              Real File Operations
-            </h5>
-
-            {/* 1. Export JSON */}
+          {/* Big Buttons */}
+          <div className="space-y-2.5 pt-1">
             <button
               type="button"
               onClick={handleExportJSON}
-              className="w-full flex items-center justify-between p-3.5 rounded-2xl glass-card border border-[#D6E9E1] hover:bg-slate-50 shadow-xs transition-all text-left cursor-pointer group"
+              className="w-full py-3.5 bg-[#0B8F68] hover:bg-[#097A59] text-white text-sm font-extrabold rounded-2xl shadow-sm transition-colors cursor-pointer flex items-center justify-center gap-2"
             >
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-[#E1F3EA] border border-[#D6E9E1] text-[#0B8F68] flex items-center justify-center shrink-0">
-                  <Download className="w-5 h-5 stroke-[2.2]" />
-                </div>
-                <div>
-                  <span className="text-xs font-extrabold text-[#163B32] block">Export Full Database (JSON)</span>
-                  <span className="text-[11px] text-[#55756D]">Download complete raw backup file for safe storage</span>
-                </div>
-              </div>
+              <Cloud className="w-4 h-4" />
+              BACK UP NOW (CLOUD)
             </button>
-
-            {/* 2. Restore JSON */}
             <input
               type="file"
               ref={fileInputRef}
@@ -208,35 +186,47 @@ export const BackupModal: React.FC<BackupModalProps> = ({
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              className="w-full flex items-center justify-between p-3.5 rounded-2xl glass-card border border-[#D6E9E1] hover:bg-slate-50 shadow-xs transition-all text-left cursor-pointer group"
+              className="w-full py-3.5 bg-white border-2 border-[#0B8F68] text-[#0B8F68] text-sm font-extrabold rounded-2xl hover:bg-[#E1F3EA] transition-colors cursor-pointer flex items-center justify-center gap-2"
             >
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-600 flex items-center justify-center shrink-0">
-                  <Upload className="w-5 h-5 stroke-[2.2]" />
-                </div>
-                <div>
-                  <span className="text-xs font-extrabold text-[#163B32] block">Restore Database from Backup</span>
-                  <span className="text-[11px] text-[#55756D]">Upload and restore from a previously exported JSON</span>
-                </div>
-              </div>
+              <Download className="w-4 h-4" />
+              RESTORE DATA FROM CLOUD
             </button>
+            <p className="text-center text-[11px] text-[#55756D]">
+              {contacts.length} customers · {entries.length} entries · {expenses.length} expenses
+            </p>
+          </div>
 
-            {/* 3. Export CSV */}
+          {/* Advanced / File Operations */}
+          <div className="pt-2 border-t border-[#D6E9E1]">
             <button
               type="button"
-              onClick={handleExportCSV}
-              className="w-full flex items-center justify-between p-3.5 rounded-2xl glass-card border border-[#D6E9E1] hover:bg-slate-50 shadow-xs transition-all text-left cursor-pointer group"
+              onClick={() => setShowAdvanced((v) => !v)}
+              className="w-full flex items-center justify-between text-xs font-extrabold uppercase tracking-wider text-[#55756D] cursor-pointer py-1"
             >
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-600 flex items-center justify-center shrink-0">
-                  <FileText className="w-5 h-5 stroke-[2.2]" />
-                </div>
-                <div>
-                  <span className="text-xs font-extrabold text-[#163B32] block">Export Ledger Spreadsheet (CSV)</span>
-                  <span className="text-[11px] text-[#55756D]">Open in Microsoft Excel or Google Sheets</span>
-                </div>
-              </div>
+              <span>Advanced / File Operations</span>
+              {showAdvanced ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
             </button>
+
+            {showAdvanced && (
+              <div className="space-y-1.5 pt-2">
+                <button
+                  type="button"
+                  onClick={handleExportJSON}
+                  className="w-full flex items-center gap-2 p-2.5 rounded-xl hover:bg-slate-50 text-left cursor-pointer text-xs font-bold text-[#163B32]"
+                >
+                  <Download className="w-3.5 h-3.5 text-[#0B8F68]" />
+                  Export JSON Backup File
+                </button>
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="w-full flex items-center gap-2 p-2.5 rounded-xl hover:bg-slate-50 text-left cursor-pointer text-xs font-bold text-[#163B32]"
+                >
+                  <Upload className="w-3.5 h-3.5 text-[#0B8F68]" />
+                  Restore from JSON File
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
