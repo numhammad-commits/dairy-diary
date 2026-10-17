@@ -15,6 +15,10 @@ interface BackupModalProps {
 
 type BackupFrequency = 'daily' | '3days' | 'weekly';
 
+// On-device snapshot used by "BACK UP NOW (CLOUD)" / "RESTORE DATA FROM CLOUD" below —
+// stored in localStorage (not a downloaded file) so no browser download prompt appears.
+const CLOUD_BACKUP_KEY = 'dairy_diary_cloud_backup_v1';
+
 export const BackupModal: React.FC<BackupModalProps> = ({
   contacts,
   entries,
@@ -31,7 +35,8 @@ export const BackupModal: React.FC<BackupModalProps> = ({
   const [businessSettings] = useState(() => loadPersistedSettings());
   const savedEmail = businessSettings.email?.trim();
 
-  // Real JSON Export
+  // Real JSON Export (file) — used by the "Advanced / File Operations" section for a
+  // portable backup file that survives clearing browser/app data.
   const handleExportJSON = () => {
     const data = exportFullDatabase();
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -43,7 +48,47 @@ export const BackupModal: React.FC<BackupModalProps> = ({
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    if (showToast) showToast('Backup saved to device successfully');
+    if (showToast) showToast('Backup file downloaded successfully');
+  };
+
+  // "BACK UP NOW (CLOUD)" — saves straight into localStorage instead of triggering a file
+  // download, so the browser's "download again?" prompt never appears. This is a quick
+  // on-device snapshot only; it does not survive clearing browser/app data, so it is not a
+  // substitute for the real file export above.
+  const handleBackupNow = () => {
+    try {
+      const data = exportFullDatabase();
+      localStorage.setItem(CLOUD_BACKUP_KEY, JSON.stringify({ savedAt: new Date().toISOString(), data }));
+      if (showToast) showToast('Backup saved to device successfully');
+    } catch (err) {
+      console.error('Failed to save backup to localStorage', err);
+      if (showToast) showToast('Failed to save backup');
+    }
+  };
+
+  // "RESTORE DATA FROM CLOUD" — restores from the localStorage snapshot saved by
+  // "BACK UP NOW (CLOUD)". Falls back to the file picker if no on-device snapshot exists.
+  const handleRestoreFromCloud = () => {
+    setRestoreError(null);
+    try {
+      const raw = localStorage.getItem(CLOUD_BACKUP_KEY);
+      if (!raw) {
+        if (showToast) showToast('No on-device backup found — pick a JSON backup file instead');
+        fileInputRef.current?.click();
+        return;
+      }
+      const parsed = JSON.parse(raw);
+      const success = restoreFullDatabase(parsed.data);
+      if (success) {
+        if (showToast) showToast('Database successfully restored from on-device backup!');
+        if (onRestoreSuccess) onRestoreSuccess();
+        onClose();
+      } else {
+        setRestoreError('The saved on-device backup is invalid or corrupted.');
+      }
+    } catch (err) {
+      setRestoreError('Failed to read the on-device backup.');
+    }
   };
 
   // Real JSON Restore
@@ -185,7 +230,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
           <div className="space-y-2.5 pt-1">
             <button
               type="button"
-              onClick={handleExportJSON}
+              onClick={handleBackupNow}
               className="w-full py-3.5 bg-[#0B8F68] hover:bg-[#097A59] text-white text-sm font-extrabold rounded-2xl shadow-sm transition-colors cursor-pointer flex items-center justify-center gap-2"
             >
               <Cloud className="w-4 h-4" />
@@ -200,7 +245,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
             />
             <button
               type="button"
-              onClick={() => fileInputRef.current?.click()}
+              onClick={handleRestoreFromCloud}
               className="w-full py-3.5 bg-white border-2 border-[#0B8F68] text-[#0B8F68] text-sm font-extrabold rounded-2xl hover:bg-[#E1F3EA] transition-colors cursor-pointer flex items-center justify-center gap-2"
             >
               <Download className="w-4 h-4" />
