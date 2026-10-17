@@ -134,7 +134,7 @@ export async function generateSawaaPdfDocument(
   // address, and generation date.
   // =========================================================================
   const headerY = 12;
-  const headerH = companyLocation || companyPhone ? 40 : 30;
+  const headerH = companyLocation || companyPhone ? 46 : 30;
   doc.setFillColor(...GREEN);
   doc.roundedRect(margin, headerY, contentWidth, headerH, 4, 4, 'F');
 
@@ -167,14 +167,14 @@ export async function generateSawaaPdfDocument(
   doc.setFontSize(16);
   doc.text(companyName.toUpperCase(), margin + 26, headerY + 15);
 
-  let headerRowY = headerY + 24;
+  let headerRowY = headerY + 27;
   if (companyPhone) {
     drawPhoneIcon(doc, margin + 4, headerRowY - 3.2, GREEN_LIGHT);
     doc.setTextColor(...GREEN_LIGHT);
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(9);
     doc.text(`Phone: ${companyPhone}`, margin + 11, headerRowY);
-    headerRowY += 7;
+    headerRowY += 8;
   }
   if (companyLocation) {
     drawPinIcon(doc, margin + 4, headerRowY - 3.6, GREEN_LIGHT);
@@ -417,7 +417,7 @@ export async function generateSawaaPdfDocument(
     yPos += 10;
   } else {
     const qrAccount = enabledAccounts.find((a) => a.qrCodeUrl);
-    const paymentBoxH = Math.max(enabledAccounts.length * 6 + 6, qrAccount ? 32 : 0);
+    const paymentBoxH = Math.max(enabledAccounts.length * 6 + 6, 32);
     doc.setDrawColor(226, 232, 240);
     doc.roundedRect(margin, yPos, contentWidth, paymentBoxH, 3, 3, 'S');
 
@@ -436,11 +436,11 @@ export async function generateSawaaPdfDocument(
       lineY += 6;
     });
 
+    const qrSize = 24;
+    const qrX = pageWidth - margin - qrSize - 4;
+    const qrY = yPos + 4;
     if (qrAccount?.qrCodeUrl) {
       try {
-        const qrSize = 24;
-        const qrX = pageWidth - margin - qrSize - 4;
-        const qrY = yPos + 4;
         const imgFormat = qrAccount.qrCodeUrl.startsWith('data:image/jpeg') || qrAccount.qrCodeUrl.startsWith('data:image/jpg') ? 'JPEG' : 'PNG';
         doc.addImage(qrAccount.qrCodeUrl, imgFormat, qrX, qrY, qrSize, qrSize);
         doc.setTextColor(...GREEN);
@@ -450,6 +450,18 @@ export async function generateSawaaPdfDocument(
       } catch (err) {
         console.warn('Failed to render payment QR code in PDF:', err);
       }
+    } else {
+      // No account has an uploaded QR image yet — reserve the same space with a
+      // neutral placeholder so the layout stays balanced until one is added in
+      // Settings, instead of silently leaving a gap.
+      doc.setDrawColor(203, 213, 225);
+      doc.setFillColor(248, 250, 252);
+      doc.roundedRect(qrX, qrY, qrSize, qrSize, 2, 2, 'FD');
+      doc.setTextColor(148, 163, 184);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(6);
+      doc.text('No QR Code', qrX + qrSize / 2, qrY + qrSize / 2 - 1, { align: 'center' });
+      doc.text('Uploaded', qrX + qrSize / 2, qrY + qrSize / 2 + 3, { align: 'center' });
     }
 
     yPos += paymentBoxH + 6;
