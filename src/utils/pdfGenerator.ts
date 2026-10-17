@@ -640,3 +640,218 @@ export async function generateSawaaPdfDocument(
     isPremium,
   };
 }
+
+// =========================================================================
+// REPORTS PAGE PDF — a period-wide summary across all customers, distinct from
+// generateSawaaPdfDocument above (which is always scoped to one customer's bill).
+// =========================================================================
+
+export interface ReportsPdfLineItem {
+  date: string;
+  time?: string;
+  typeLabel: 'Milk' | 'Payment' | 'Expense';
+  label: string;
+  detail: string;
+  amount: number;
+}
+
+export interface ReportsPdfSummary {
+  periodTitle: string;
+  milkLiters: number;
+  buySellAmount: number;
+  paidReceived: number;
+  entriesCount: number;
+  due: number;
+}
+
+export interface GeneratedReportsPdfResult {
+  blob: Blob;
+  url: string;
+  filename: string;
+  file: File;
+}
+
+export async function generateReportsPdf(
+  summary: ReportsPdfSummary,
+  items: ReportsPdfLineItem[],
+  businessSettings?: BusinessSettings
+): Promise<GeneratedReportsPdfResult> {
+  const doc = new jsPDF({
+    orientation: 'portrait',
+    unit: 'mm',
+    format: 'a4',
+  });
+
+  const pageWidth = 210;
+  const pageHeight = 297;
+  const margin = 14;
+  const contentWidth = pageWidth - margin * 2;
+
+  const companyName = businessSettings?.businessName?.trim() || 'Dairy Diary';
+  const currSym = businessSettings?.currencySymbol?.trim() || 'Rs';
+
+  const now = new Date();
+  const generatedDateStr = now.toLocaleDateString('en-US', { day: '2-digit', month: 'short', year: 'numeric' });
+
+  // 1. Header Bar
+  doc.setFillColor(30, 86, 49);
+  doc.rect(margin, 12, contentWidth, 20, 'F');
+  doc.setTextColor(255, 255, 255);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(13);
+  doc.text(companyName.toUpperCase(), margin + 4, 21);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.text('Period Summary Report', margin + 4, 27);
+  doc.text(`Generated: ${generatedDateStr}`, pageWidth - margin - 4, 21, { align: 'right' });
+
+  let yPos = 38;
+
+  doc.setTextColor(30, 86, 49);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(12);
+  doc.text(summary.periodTitle, margin, yPos);
+  yPos += 6;
+
+  // 2. 4 Summary Boxes (Milk, Buy & Sell, Paid/Received, Entries)
+  const boxW = (contentWidth - 9) / 4;
+  const boxH = 17;
+  const boxData: { label: string; value: string; bg: [number, number, number]; fg: [number, number, number] }[] = [
+    { label: 'MILK', value: `${summary.milkLiters.toFixed(2)} L`, bg: [241, 248, 243], fg: [30, 86, 49] },
+    { label: 'BUY & SELL', value: `${currSym} ${Math.round(summary.buySellAmount).toLocaleString()}`, bg: [241, 248, 243], fg: [30, 86, 49] },
+    { label: 'PAID/RECEIVED', value: `${currSym} ${Math.round(summary.paidReceived).toLocaleString()}`, bg: [236, 253, 245], fg: [15, 118, 110] },
+    { label: 'ENTRIES', value: `${summary.entriesCount}`, bg: [255, 247, 237], fg: [180, 83, 9] },
+  ];
+  boxData.forEach((b, i) => {
+    const x = margin + i * (boxW + 3);
+    doc.setFillColor(b.bg[0], b.bg[1], b.bg[2]);
+    doc.roundedRect(x, yPos, boxW, boxH, 2, 2, 'F');
+    doc.setTextColor(100, 116, 139);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(6.5);
+    doc.text(b.label, x + boxW / 2, yPos + 5.5, { align: 'center' });
+    doc.setTextColor(b.fg[0], b.fg[1], b.fg[2]);
+    doc.setFontSize(9.5);
+    doc.text(b.value, x + boxW / 2, yPos + 12.5, { align: 'center' });
+  });
+  yPos += boxH + 4;
+
+  if (summary.due > 0) {
+    doc.setFillColor(254, 242, 242);
+    doc.setDrawColor(254, 202, 202);
+    doc.roundedRect(margin, yPos, contentWidth, 9, 2, 2, 'FD');
+    doc.setTextColor(185, 28, 28);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8.5);
+    doc.text(`OUTSTANDING DUE FOR PERIOD: ${currSym} ${Math.round(summary.due).toLocaleString()}`, margin + 4, yPos + 6);
+    yPos += 13;
+  } else {
+    yPos += 2;
+  }
+
+  // 3. Transaction Details Table (Milk + Payment + Expense, mixed)
+  doc.setTextColor(30, 86, 49);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9);
+  doc.text('TRANSACTION DETAILS', margin, yPos);
+  yPos += 3.5;
+
+  const cols = [
+    { title: 'Date', width: 20, align: 'left' as const },
+    { title: 'Time', width: 16, align: 'left' as const },
+    { title: 'Type', width: 20, align: 'left' as const },
+    { title: 'Description', width: 68, align: 'left' as const },
+    { title: `Amount (${currSym})`, width: 58, align: 'right' as const },
+  ];
+
+  const drawHeader = (topY: number) => {
+    doc.setFillColor(30, 86, 49);
+    doc.rect(margin, topY, contentWidth, 6.5, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7.5);
+    let curX = margin + 2;
+    cols.forEach((c) => {
+      if (c.align === 'right') doc.text(c.title, curX + c.width - 4, topY + 4.5, { align: 'right' });
+      else doc.text(c.title, curX, topY + 4.5);
+      curX += c.width;
+    });
+  };
+
+  drawHeader(yPos);
+  yPos += 6.5;
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7.5);
+
+  if (items.length === 0) {
+    doc.setTextColor(100, 116, 139);
+    doc.setFont('helvetica', 'italic');
+    doc.text('No transactions recorded for this period.', margin + 3, yPos + 4);
+    yPos += 8;
+  } else {
+    items.forEach((item, idx) => {
+      if (yPos > pageHeight - 25) {
+        doc.addPage();
+        yPos = 16;
+        drawHeader(yPos);
+        yPos += 6.5;
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(7.5);
+      }
+
+      const isEven = idx % 2 === 0;
+      doc.setFillColor(isEven ? 255 : 249, isEven ? 255 : 251, isEven ? 255 : 250);
+      doc.rect(margin, yPos, contentWidth, 5.5, 'F');
+      doc.setDrawColor(230, 238, 233);
+      doc.line(margin, yPos + 5.5, margin + contentWidth, yPos + 5.5);
+
+      doc.setTextColor(30, 41, 59);
+      let curX = margin + 2;
+      doc.text(item.date, curX, yPos + 3.8);
+      curX += cols[0].width;
+      doc.text(item.time || '-', curX, yPos + 3.8);
+      curX += cols[1].width;
+      doc.text(item.typeLabel, curX, yPos + 3.8);
+      curX += cols[2].width;
+
+      const desc = `${item.label}${item.detail ? ' - ' + item.detail : ''}`;
+      doc.text(desc.length > 42 ? `${desc.substring(0, 39)}...` : desc, curX, yPos + 3.8);
+      curX += cols[3].width;
+
+      doc.setFont('helvetica', 'bold');
+      doc.text(`${currSym} ${Math.round(item.amount).toLocaleString()}`, curX + cols[4].width - 4, yPos + 3.8, { align: 'right' });
+      doc.setFont('helvetica', 'normal');
+
+      yPos += 5.5;
+    });
+  }
+
+  yPos += 8;
+  if (yPos > pageHeight - 20) {
+    doc.addPage();
+    yPos = 16;
+  }
+
+  // 4. Footer
+  doc.setTextColor(148, 163, 184);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7);
+  doc.text(
+    `${companyName} · Generated by Dairy Diary · Developed by SAWAA Networking`,
+    pageWidth / 2,
+    pageHeight - 7,
+    { align: 'center' }
+  );
+
+  const pdfBlob = doc.output('blob');
+  const filename = `Dairy_Diary_Report_${summary.periodTitle.replace(/[^a-zA-Z0-9]/g, '_')}.pdf`;
+  const pdfUrl = URL.createObjectURL(pdfBlob);
+  const pdfFile = new File([pdfBlob], filename, { type: 'application/pdf' });
+
+  return {
+    blob: pdfBlob,
+    url: pdfUrl,
+    filename,
+    file: pdfFile,
+  };
+}
