@@ -169,14 +169,16 @@ export async function generateSawaaPdfDocument(
   const logoCX = margin + 13;
   const logoCY = headerY + 14;
   const logoR = 9;
-  doc.setFillColor(255, 255, 255);
-  doc.circle(logoCX, logoCY, logoR, 'F');
 
   let logoDrawn = false;
   if (businessSettings?.logoUrl) {
     try {
       const imgFormat = businessSettings.logoUrl.startsWith('data:image/jpeg') || businessSettings.logoUrl.startsWith('data:image/jpg') ? 'JPEG' : 'PNG';
-      const maxDim = (logoR - 1.5) * 2;
+      // No background box/circle behind a real uploaded logo — just the image
+      // itself, contain-fit and centered on the same point the fallback
+      // emblem below uses, so it stays aligned with the business name
+      // regardless of whether the source image is square or rectangular.
+      const maxDim = 16;
       const dims = await loadImageNaturalSize(businessSettings.logoUrl);
       const { w: drawW, h: drawH } = dims
         ? computeContainSize(dims.width, dims.height, maxDim, maxDim)
@@ -188,6 +190,10 @@ export async function generateSawaaPdfDocument(
     }
   }
   if (!logoDrawn) {
+    // Fallback vector droplet emblem needs its own white circular backdrop to
+    // read against the green header — only drawn when there's no real logo.
+    doc.setFillColor(255, 255, 255);
+    doc.circle(logoCX, logoCY, logoR, 'F');
     doc.setFillColor(...GREEN);
     doc.circle(logoCX, logoCY + 1, logoR - 3.5, 'F');
     doc.setFillColor(110, 231, 183);
