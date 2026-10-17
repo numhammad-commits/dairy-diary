@@ -24,7 +24,8 @@ import {
   Search,
   AlertCircle,
   X,
-  Fuel
+  Fuel,
+  Pencil
 } from 'lucide-react';
 import { BusinessSettings } from '../types/dairy';
 import { SawaaLogo } from './SawaaLogo';
@@ -53,6 +54,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 }) => {
   const [form, setForm] = useState<BusinessSettings>(settings);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [isEditingProfile, setIsEditingProfile] = useState(false);
+  const [expandedPaymentMethod, setExpandedPaymentMethod] = useState<string | null>(null);
   const [showCurrencyModal, setShowCurrencyModal] = useState(false);
   const [showTemplateModal, setShowTemplateModal] = useState(false);
   const [pendingRegion, setPendingRegion] = useState<RegionConfig | null>(null);
@@ -193,6 +196,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     if (e) e.preventDefault();
     onUpdateSettings(form);
     setSaveSuccess(true);
+    setIsEditingProfile(false);
     setTimeout(() => setSaveSuccess(false), 2000);
   };
 
@@ -230,41 +234,28 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       {/* 2. Scrollable Body containing all sections */}
       <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-6">
         {/* ============================================================== */}
-        {/* SECTION 0: APPLICATION IDENTITY                                */}
-        {/* ============================================================== */}
-        <div>
-          <h2 className="text-[11px] font-black uppercase tracking-wider text-[#163B32] mb-2 px-1">
-            Application Brand &amp; Identity
-          </h2>
-
-          <div className="glass-card rounded-2xl p-4 border border-[#D6E9E1] shadow-xs flex items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
-              <SawaaLogo variant="icon" size="md" />
-              <div>
-                <h3 className="text-sm font-black text-[#163B32] leading-tight">
-                  Dairy Diary
-                </h3>
-                <p className="text-[11px] text-[#55756D] font-medium">
-                  Developed by SAWAA Networking
-                </p>
-                <p className="text-[10px] text-[#0B8F68] font-bold mt-0.5">
-                  Milk Ledger &amp; Customer Billing System
-                </p>
-              </div>
-            </div>
-            <span className="px-2.5 py-1 bg-[#E1F3EA] text-[#0B8F68] border border-[#D6E9E1] rounded-full text-[10px] font-black uppercase tracking-wider shrink-0">
-              Official App
-            </span>
-          </div>
-        </div>
-
-        {/* ============================================================== */}
         {/* SECTION 1: BUSINESS PROFILE (Screen 1)                         */}
         {/* ============================================================== */}
         <div>
-          <h2 className="text-[11px] font-black uppercase tracking-wider text-[#163B32] mb-2 px-1">
-            Business Profile
-          </h2>
+          <div className="flex items-center justify-between mb-2 px-1">
+            <h2 className="text-[11px] font-black uppercase tracking-wider text-[#163B32]">
+              Business Profile
+            </h2>
+            {isEditingProfile ? (
+              <span className="text-[10px] font-bold text-[#0B8F68] bg-[#E1F3EA] px-2.5 py-1 rounded-full border border-[#D6E9E1]">
+                Editing…
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setIsEditingProfile(true)}
+                className="text-[10px] font-bold text-[#0B8F68] bg-[#E1F3EA] hover:bg-[#D6E9E1] px-2.5 py-1 rounded-full border border-[#D6E9E1] flex items-center gap-1 cursor-pointer transition-colors"
+              >
+                <Pencil className="w-3 h-3" />
+                <span>Edit Profile</span>
+              </button>
+            )}
+          </div>
 
           <div className="glass-card rounded-2xl p-4 border border-[#D6E9E1] shadow-xs space-y-3">
             <div className="flex items-center gap-3.5">
@@ -310,7 +301,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     value={form.businessName}
                     onChange={(e) => setForm({ ...form, businessName: e.target.value })}
                     placeholder="Business / Distributor Name"
-                    className="w-full pl-9 pr-3 py-2 text-xs font-bold text-slate-900 bg-white border border-slate-300 rounded-xl focus:outline-none focus:ring-1 focus:ring-emerald-500 shadow-xs"
+                    readOnly={!isEditingProfile}
+                    className={`w-full pl-9 pr-3 py-2 text-xs font-bold rounded-xl shadow-xs focus:outline-none ${
+                      isEditingProfile
+                        ? 'text-slate-900 bg-white border border-slate-300 focus:ring-1 focus:ring-emerald-500'
+                        : 'text-slate-500 bg-slate-100 border border-slate-200 cursor-not-allowed'
+                    }`}
                   />
                 </div>
 
@@ -321,7 +317,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     value={form.phone}
                     onChange={(e) => setForm({ ...form, phone: e.target.value })}
                     placeholder="Phone Number (e.g. 03315183002)"
-                    className="w-full pl-9 pr-3 py-2 text-xs font-semibold text-slate-900 bg-white border border-slate-300 rounded-xl focus:outline-none focus:ring-1 focus:ring-emerald-500 shadow-xs"
+                    readOnly={!isEditingProfile}
+                    className={`w-full pl-9 pr-3 py-2 text-xs font-semibold rounded-xl shadow-xs focus:outline-none ${
+                      isEditingProfile
+                        ? 'text-slate-900 bg-white border border-slate-300 focus:ring-1 focus:ring-emerald-500'
+                        : 'text-slate-500 bg-slate-100 border border-slate-200 cursor-not-allowed'
+                    }`}
                   />
                 </div>
               </div>
@@ -335,7 +336,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 value={form.location}
                 onChange={(e) => setForm({ ...form, location: e.target.value })}
                 placeholder="Location / Address"
-                className="w-full pl-9 pr-3 py-2 text-xs font-semibold text-slate-900 bg-white border border-slate-300 rounded-xl focus:outline-none focus:ring-1 focus:ring-emerald-500 shadow-xs"
+                readOnly={!isEditingProfile}
+                className={`w-full pl-9 pr-3 py-2 text-xs font-semibold rounded-xl shadow-xs focus:outline-none ${
+                  isEditingProfile
+                    ? 'text-slate-900 bg-white border border-slate-300 focus:ring-1 focus:ring-emerald-500'
+                    : 'text-slate-500 bg-slate-100 border border-slate-200 cursor-not-allowed'
+                }`}
               />
             </div>
 
@@ -347,7 +353,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 value={form.email || ''}
                 onChange={(e) => setForm({ ...form, email: e.target.value })}
                 placeholder="Email Address (e.g. farm@example.com)"
-                className="w-full pl-9 pr-3 py-2 text-xs font-semibold text-slate-900 bg-white border border-slate-300 rounded-xl focus:outline-none focus:ring-1 focus:ring-emerald-500 shadow-xs"
+                readOnly={!isEditingProfile}
+                className={`w-full pl-9 pr-3 py-2 text-xs font-semibold rounded-xl shadow-xs focus:outline-none ${
+                  isEditingProfile
+                    ? 'text-slate-900 bg-white border border-slate-300 focus:ring-1 focus:ring-emerald-500'
+                    : 'text-slate-500 bg-slate-100 border border-slate-200 cursor-not-allowed'
+                }`}
               />
             </div>
 
@@ -379,14 +390,21 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             {activeRegion.methods.map((method) => {
               const data = getMethodData(method.id);
               const isShowOnPdf = Boolean(data.showOnPdf);
+              const isExpanded = expandedPaymentMethod === method.id;
 
               return (
                 <div
                   key={method.id}
                   className="glass-card rounded-2xl p-3.5 border border-[#D6E9E1] shadow-xs space-y-3"
                 >
-                  <div className="flex items-center justify-between pb-2 border-b border-[#D6E9E1]">
-                    <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setExpandedPaymentMethod(isExpanded ? null : method.id)}
+                    className={`w-full flex items-center justify-between cursor-pointer text-left ${
+                      isExpanded ? 'pb-2 border-b border-[#D6E9E1]' : ''
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
                       <div
                         className={`w-7 h-7 rounded-lg ${method.badgeBg} text-white font-black text-xs flex items-center justify-center shadow-xs shrink-0`}
                       >
@@ -398,125 +416,137 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       </div>
                     </div>
 
-                    {/* PDF Toggle Switch */}
-                    <label className="flex items-center gap-2 cursor-pointer shrink-0">
-                      <span className="text-[10px] font-bold text-[#55756D]">Show on PDF Bill</span>
-                      <div className="relative inline-flex items-center">
-                        <input
-                          type="checkbox"
-                          checked={isShowOnPdf}
-                          onChange={(e) => updateMethodField(method.id, 'showOnPdf', e.target.checked)}
-                          className="sr-only peer"
-                        />
-                        <div className="w-9 h-5 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#0B8F68]"></div>
-                      </div>
-                    </label>
-                  </div>
-
-                  {/* Dynamic Fields for this method */}
-                  <div
-                    className={
-                      method.fields.length > 1
-                        ? 'grid grid-cols-1 sm:grid-cols-2 gap-2'
-                        : 'space-y-2'
-                    }
-                  >
-                    {method.fields.map((fld) => {
-                      const val = data[fld.key] || '';
-                      const warn = fld.validate ? fld.validate(val) : null;
-                      const isFullCol =
-                        fld.type === 'select' ||
-                        fld.key === 'iban' ||
-                        (fld.key === 'accountTitle' && method.fields.length >= 3);
-
-                      return (
-                        <div
-                          key={fld.key}
-                          className={isFullCol ? 'sm:col-span-2' : ''}
-                        >
-                          <label className="block text-[10px] font-semibold text-[#55756D] mb-1">
-                            {fld.label}
-                          </label>
-                          {fld.type === 'select' ? (
-                            <select
-                              value={val}
-                              onChange={(e) => updateMethodField(method.id, fld.key, e.target.value)}
-                              className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-slate-800 font-bold focus:outline-none shadow-xs"
-                            >
-                              <option value="">Select Bank</option>
-                              {fld.options?.map((opt) => (
-                                <option key={opt} value={opt}>
-                                  {opt}
-                                </option>
-                              ))}
-                            </select>
-                          ) : (
-                            <input
-                              type="text"
-                              value={val}
-                              onChange={(e) => updateMethodField(method.id, fld.key, e.target.value)}
-                              placeholder={fld.placeholder}
-                              className={`w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-slate-800 focus:outline-none shadow-xs ${
-                                fld.isMono ? 'font-mono font-semibold' : ''
-                              }`}
-                            />
-                          )}
-                          {warn && val && (
-                            <p className="text-[9px] text-amber-500 mt-0.5 font-medium leading-tight">
-                              ⚠️ {warn}
-                            </p>
-                          )}
+                    <div className="flex items-center gap-2 shrink-0">
+                      {/* PDF Toggle Switch */}
+                      <label
+                        className="flex items-center gap-2 cursor-pointer"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <span className="text-[10px] font-bold text-[#55756D] hidden sm:inline">Show on PDF Bill</span>
+                        <div className="relative inline-flex items-center">
+                          <input
+                            type="checkbox"
+                            checked={isShowOnPdf}
+                            onChange={(e) => updateMethodField(method.id, 'showOnPdf', e.target.checked)}
+                            className="sr-only peer"
+                          />
+                          <div className="w-9 h-5 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#0B8F68]"></div>
                         </div>
-                      );
-                    })}
-                  </div>
-
-                  {/* QR Code Upload / Remove for methods that support QR */}
-                  {method.hasQr && (
-                    <div className="pt-1 flex items-center justify-between text-[11px]">
-                      <div className="flex items-center gap-2">
-                        <QrCode className="w-4 h-4 text-[#0B8F68]" />
-                        <span className="text-[#55756D] font-medium">{method.name} QR Code:</span>
-                        {data.qrCodeUrl ? (
-                          <span className="text-[#0B8F68] font-bold flex items-center gap-1">
-                            <CheckCircle2 className="w-3.5 h-3.5" /> Attached
-                          </span>
-                        ) : (
-                          <span className="text-[#55756D]/60">None</span>
-                        )}
-                      </div>
-
-                      <div className="flex items-center gap-1.5">
-                        <input
-                          type="file"
-                          id={`qr-upload-input-${method.id}`}
-                          onChange={(e) => {
-                            handleMethodQrUpload(method.id, e.target.files?.[0]);
-                            e.target.value = '';
-                          }}
-                          accept="image/*"
-                          className="hidden"
-                        />
-                        {data.qrCodeUrl ? (
-                          <button
-                            type="button"
-                            onClick={() => updateMethodField(method.id, 'qrCodeUrl', '')}
-                            className="text-rose-600 hover:text-rose-700 text-[10px] font-bold px-2 py-0.5 bg-rose-50 border border-rose-200 rounded cursor-pointer"
-                          >
-                            Remove
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => document.getElementById(`qr-upload-input-${method.id}`)?.click()}
-                            className="text-[#0B8F68] hover:text-[#163B32] text-[10px] font-bold px-2.5 py-1 bg-[#E1F3EA] border border-[#D6E9E1] rounded-lg flex items-center gap-1 cursor-pointer"
-                          >
-                            <Upload className="w-3 h-3" />
-                            <span>Upload QR</span>
-                          </button>
-                        )}
-                      </div>
+                      </label>
+                      <ChevronRight
+                        className={`w-4 h-4 text-[#55756D] transition-transform ${isExpanded ? 'rotate-90' : ''}`}
+                      />
                     </div>
+                  </button>
+
+                  {isExpanded && (
+                    <>
+                      {/* Dynamic Fields for this method */}
+                      <div
+                        className={
+                          method.fields.length > 1
+                            ? 'grid grid-cols-1 sm:grid-cols-2 gap-2'
+                            : 'space-y-2'
+                        }
+                      >
+                        {method.fields.map((fld) => {
+                          const val = data[fld.key] || '';
+                          const warn = fld.validate ? fld.validate(val) : null;
+                          const isFullCol =
+                            fld.type === 'select' ||
+                            fld.key === 'iban' ||
+                            (fld.key === 'accountTitle' && method.fields.length >= 3);
+
+                          return (
+                            <div
+                              key={fld.key}
+                              className={isFullCol ? 'sm:col-span-2' : ''}
+                            >
+                              <label className="block text-[10px] font-semibold text-[#55756D] mb-1">
+                                {fld.label}
+                              </label>
+                              {fld.type === 'select' ? (
+                                <select
+                                  value={val}
+                                  onChange={(e) => updateMethodField(method.id, fld.key, e.target.value)}
+                                  className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-slate-800 font-bold focus:outline-none shadow-xs"
+                                >
+                                  <option value="">Select Bank</option>
+                                  {fld.options?.map((opt) => (
+                                    <option key={opt} value={opt}>
+                                      {opt}
+                                    </option>
+                                  ))}
+                                </select>
+                              ) : (
+                                <input
+                                  type="text"
+                                  value={val}
+                                  onChange={(e) => updateMethodField(method.id, fld.key, e.target.value)}
+                                  placeholder={fld.placeholder}
+                                  className={`w-full px-2.5 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-slate-800 focus:outline-none shadow-xs ${
+                                    fld.isMono ? 'font-mono font-semibold' : ''
+                                  }`}
+                                />
+                              )}
+                              {warn && val && (
+                                <p className="text-[9px] text-amber-500 mt-0.5 font-medium leading-tight">
+                                  ⚠️ {warn}
+                                </p>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {/* QR Code Upload / Remove for methods that support QR */}
+                      {method.hasQr && (
+                        <div className="pt-1 flex items-center justify-between text-[11px]">
+                          <div className="flex items-center gap-2">
+                            <QrCode className="w-4 h-4 text-[#0B8F68]" />
+                            <span className="text-[#55756D] font-medium">{method.name} QR Code:</span>
+                            {data.qrCodeUrl ? (
+                              <span className="text-[#0B8F68] font-bold flex items-center gap-1">
+                                <CheckCircle2 className="w-3.5 h-3.5" /> Attached
+                              </span>
+                            ) : (
+                              <span className="text-[#55756D]/60">None</span>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-1.5">
+                            <input
+                              type="file"
+                              id={`qr-upload-input-${method.id}`}
+                              onChange={(e) => {
+                                handleMethodQrUpload(method.id, e.target.files?.[0]);
+                                e.target.value = '';
+                              }}
+                              accept="image/*"
+                              className="hidden"
+                            />
+                            {data.qrCodeUrl ? (
+                              <button
+                                type="button"
+                                onClick={() => updateMethodField(method.id, 'qrCodeUrl', '')}
+                                className="text-rose-600 hover:text-rose-700 text-[10px] font-bold px-2 py-0.5 bg-rose-50 border border-rose-200 rounded cursor-pointer"
+                              >
+                                Remove
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => document.getElementById(`qr-upload-input-${method.id}`)?.click()}
+                                className="text-[#0B8F68] hover:text-[#163B32] text-[10px] font-bold px-2.5 py-1 bg-[#E1F3EA] border border-[#D6E9E1] rounded-lg flex items-center gap-1 cursor-pointer"
+                              >
+                                <Upload className="w-3 h-3" />
+                                <span>Upload QR</span>
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
               );
@@ -818,6 +848,35 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <Sparkles className="w-3.5 h-3.5" />
             <span>View Architecture Blueprint &amp; PostgreSQL Schema</span>
           </button>
+        </div>
+
+        {/* ============================================================== */}
+        {/* SECTION: ABOUT                                                  */}
+        {/* ============================================================== */}
+        <div>
+          <h2 className="text-[11px] font-black uppercase tracking-wider text-[#163B32] mb-2 px-1">
+            About
+          </h2>
+
+          <div className="glass-card rounded-2xl p-4 border border-[#D6E9E1] shadow-xs flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <SawaaLogo variant="icon" size="md" />
+              <div>
+                <h3 className="text-sm font-black text-[#163B32] leading-tight">
+                  Dairy Diary
+                </h3>
+                <p className="text-[11px] text-[#55756D] font-medium">
+                  Powered by Dairy Diary · Developed by SAWAA Networking
+                </p>
+                <p className="text-[10px] text-[#0B8F68] font-bold mt-0.5">
+                  Milk Ledger &amp; Customer Billing System
+                </p>
+              </div>
+            </div>
+            <span className="px-2.5 py-1 bg-[#E1F3EA] text-[#0B8F68] border border-[#D6E9E1] rounded-full text-[10px] font-black uppercase tracking-wider shrink-0">
+              Official App
+            </span>
+          </div>
         </div>
       </div>
 
