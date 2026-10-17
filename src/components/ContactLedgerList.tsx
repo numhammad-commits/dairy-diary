@@ -215,17 +215,10 @@ export const ContactLedgerList: React.FC<ContactLedgerListProps> = ({
               </div>
 
               {/* Name & Timestamp */}
-              <div className="min-w-0 pr-1">
-                <div className="flex items-center gap-1.5">
-                  <h4 className="text-sm font-bold text-[#163B32] truncate tracking-tight group-hover:text-[#0B8F68]">
-                    {contact.name}
-                  </h4>
-                  {contact.role === 'buyer' && (
-                    <span className="text-[10px] font-bold text-[#0B8F68] bg-[#E1F3EA] px-2 py-0.5 rounded-full border border-[#D6E9E1]">
-                      Buyer
-                    </span>
-                  )}
-                </div>
+              <div className="min-w-0 flex-1 pr-1">
+                <h4 className="text-sm font-bold text-[#163B32] tracking-tight leading-snug group-hover:text-[#0B8F68]">
+                  {contact.name}
+                </h4>
                 <p className="text-xs text-[#55756D] font-medium mt-0.5 truncate flex items-center gap-1">
                   <span>{getContactActivityLabel(contact)}</span>
                 </p>
