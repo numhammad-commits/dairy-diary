@@ -1,9 +1,70 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { ArrowLeft, X, Share2, Download, Eye, Check, FileText, Calendar, Clock, DollarSign, Smartphone, Loader2 } from 'lucide-react';
 import { Contact, LedgerEntry, PaymentRecord, BusinessSettings } from '../types/dairy';
 import { formatPKR, formatLiters, getDeviceTodayDate, formatDairyReceiptText } from '../utils/formatters';
 import { generateSawaaPdfDocument } from '../utils/pdfGenerator';
 import { SawaaLogo } from './SawaaLogo';
+import { ReceiptTemplate } from './ReceiptTemplate';
+
+// Days Taken / Days Missed — a small, self-contained display-only computation (duplicated
+// here rather than imported from pdfGenerator.ts, which isn't in this task's write-access
+// scope). For a plain "Month YYYY" period, the full calendar month is used; otherwise the
+// actual date span covered by the entries themselves is used.
+function tryParseMonthTitle(title: string): { year: number; month: number } | null {
+  const months = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
+  const match = title.trim().toLowerCase().match(/^([a-z]+)\s+(\d{4})$/);
+  if (!match) return null;
+  const monthIdx = months.indexOf(match[1]);
+  if (monthIdx === -1) return null;
+  return { year: parseInt(match[2], 10), month: monthIdx + 1 };
+}
+
+function computeDeliveryDayStats(entries: LedgerEntry[], periodTitle: string): { daysTaken: number; missedDaysLabel: string } {
+  if (entries.length === 0) {
+    return { daysTaken: 0, missedDaysLabel: 'None' };
+  }
+
+  const takenDates = Array.from(new Set(entries.map((e) => e.date))).sort();
+  const daysTaken = takenDates.length;
+
+  let rangeStart: Date;
+  let rangeEnd: Date;
+
+  const monthMatch = tryParseMonthTitle(periodTitle);
+  if (monthMatch) {
+    rangeStart = new Date(monthMatch.year, monthMatch.month - 1, 1);
+    rangeEnd = new Date(monthMatch.year, monthMatch.month, 0);
+  } else {
+    const [fy, fm, fd] = takenDates[0].split('-').map(Number);
+    const [ly, lm, ld] = takenDates[takenDates.length - 1].split('-').map(Number);
+    rangeStart = new Date(fy, fm - 1, fd);
+    rangeEnd = new Date(ly, lm - 1, ld);
+  }
+
+  const takenSet = new Set(takenDates);
+  const missedDayNumbers: number[] = [];
+  const cursor = new Date(rangeStart);
+  while (cursor <= rangeEnd) {
+    const y = cursor.getFullYear();
+    const m = String(cursor.getMonth() + 1).padStart(2, '0');
+    const d = String(cursor.getDate()).padStart(2, '0');
+    if (!takenSet.has(`${y}-${m}-${d}`)) {
+      missedDayNumbers.push(cursor.getDate());
+    }
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  let missedDaysLabel: string;
+  if (missedDayNumbers.length === 0) {
+    missedDaysLabel = 'None';
+  } else if (missedDayNumbers.length > 8) {
+    missedDaysLabel = `${missedDayNumbers.slice(0, 6).join(', ')} +${missedDayNumbers.length - 6} more`;
+  } else {
+    missedDaysLabel = missedDayNumbers.join(', ');
+  }
+
+  return { daysTaken, missedDaysLabel };
+}
 
 interface CustomerShareReceiptModalProps {
   contact: Contact;
@@ -39,6 +100,27 @@ export const CustomerShareReceiptModal: React.FC<CustomerShareReceiptModalProps>
   const [isSharing, setIsSharing] = useState<boolean>(false);
 
   const businessName = businessSettings?.businessName || 'Dairy Diary';
+
+  // Hidden receipt card, captured via html2canvas when the Due Receipt is shared.
+  const receiptRef = useRef<HTMLDivElement>(null);
+
+  const monthEntriesForReceipt = useMemo(() => {
+    // activeMonthDisplay looks like "October 2026" — derive its real YYYY-MM key via
+    // tryParseMonthTitle rather than a raw substring (which doesn't match a date prefix).
+    const monthInfo = tryParseMonthTitle(activeMonthDisplay);
+    const monthKey = monthInfo ? `${monthInfo.year}-${String(monthInfo.month).padStart(2, '0')}` : null;
+    const filtered = entries.filter(
+      (e) => e.contactId === contact.id && (monthKey ? e.date.startsWith(monthKey) : true)
+    );
+    return filtered.length > 0 ? filtered : entries.filter((e) => e.contactId === contact.id);
+  }, [entries, contact.id, activeMonthDisplay]);
+
+  const dayStats = useMemo(
+    () => computeDeliveryDayStats(monthEntriesForReceipt, activeMonthDisplay),
+    [monthEntriesForReceipt, activeMonthDisplay]
+  );
+
+  const avgRate = metrics.milk > 0 ? metrics.amount / metrics.milk : 0;
 
   // Find most recent payment for this contact
   const latestPayment = useMemo(() => {
@@ -96,16 +178,15 @@ export const CustomerShareReceiptModal: React.FC<CustomerShareReceiptModalProps>
     }
   }, [activeTab, businessName, contact.name, activeMonthDisplay, currentTodayStr, currentTimeStr, metrics, latestPayment]);
 
-  // Shared PDF generation, reused by both the Share and Download PDF buttons so they
-  // always attach/download the exact same document.
+  // PDF generation for the standalone "Download PDF" button (unaffected by this task —
+  // Share now uses the html2canvas image receipt below instead of this PDF).
   const buildReceiptPdf = async () => {
-    const monthEntries = entries.filter(
-      (e) => e.contactId === contact.id && e.date.startsWith(activeMonthDisplay.substring(0, 7))
-    );
-
+    // Reuses the same monthEntriesForReceipt filter fix as the new receipt image, so the
+    // PDF's own transaction/day-stats data is scoped to this month too, not all-time
+    // (it already has its own all-time fallback for contacts with no entries this month).
     return generateSawaaPdfDocument(
       contact,
-      monthEntries.length > 0 ? monthEntries : entries.filter((e) => e.contactId === contact.id),
+      monthEntriesForReceipt,
       activeMonthDisplay,
       businessSettings,
       {
@@ -119,19 +200,41 @@ export const CustomerShareReceiptModal: React.FC<CustomerShareReceiptModalProps>
     );
   };
 
-  // Handle Share: generate the visual PDF receipt and attach it via the native share
-  // sheet (Web Share API Level 2), with the formatted text as the companion caption.
-  // Falls back to downloading the PDF + opening WhatsApp with the text when file
-  // sharing isn't supported, and to text-only WhatsApp if PDF generation itself fails.
-  const handleShare = async () => {
-    setIsSharing(true);
-    try {
-      const pdf = await buildReceiptPdf();
+  // Handle Share (Due Receipt tab): capture the hidden ReceiptTemplate card as a real
+  // image via html2canvas and attach it via the native share sheet (Web Share API Level
+  // 2), with the formatted text as the companion caption. Falls back to downloading the
+  // image + opening WhatsApp with the text when file sharing isn't supported, and to
+  // text-only WhatsApp if the image capture itself fails.
+  const handleShareDueReceiptImage = async () => {
+    if (!receiptRef.current) {
+      const cleanPhone = contact.phone.replace(/[^0-9]/g, '');
+      window.open(`https://wa.me/${cleanPhone}?text=${encodeURIComponent(shareTextPayload)}`, '_blank');
+      return;
+    }
 
-      if (navigator.share && navigator.canShare && navigator.canShare({ files: [pdf.file] })) {
+    try {
+      // html2canvas-pro (not the plain html2canvas also present in node_modules as a
+      // jsPDF sub-dependency) — the plain version's CSS parser can't read Tailwind v4's
+      // oklch() color values used throughout this app's compiled stylesheet, and throws
+      // on every capture regardless of what this component itself uses. -pro is a
+      // purpose-built fork with native oklch support.
+      const html2canvas = (await import('html2canvas-pro')).default;
+      const canvas = await html2canvas(receiptRef.current, {
+        scale: 2,
+        backgroundColor: '#ffffff',
+        useCORS: true,
+      });
+
+      const blob: Blob | null = await new Promise((resolve) => canvas.toBlob((b) => resolve(b), 'image/png'));
+      if (!blob) throw new Error('Failed to create image blob from canvas');
+
+      const filename = `Dairy_Diary_Receipt_${contact.name.replace(/[^a-zA-Z0-9]/g, '_')}_${activeMonthDisplay.replace(/[^a-zA-Z0-9]/g, '_')}.png`;
+      const file = new File([blob], filename, { type: 'image/png' });
+
+      if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
         try {
           await navigator.share({
-            files: [pdf.file],
+            files: [file],
             title: `${businessName} Receipt - ${contact.name}`,
             text: shareTextPayload,
           });
@@ -143,21 +246,51 @@ export const CustomerShareReceiptModal: React.FC<CustomerShareReceiptModalProps>
         }
       }
 
-      // Fallback: download the PDF so it's ready on-device, then open WhatsApp with the text
+      // Fallback: download the image so it's ready on-device, then open WhatsApp with the text
+      const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
-      link.href = pdf.url;
-      link.download = pdf.filename;
+      link.href = url;
+      link.download = filename;
       link.click();
+      URL.revokeObjectURL(url);
 
       const cleanPhone = contact.phone.replace(/[^0-9]/g, '');
       window.open(`https://wa.me/${cleanPhone}?text=${encodeURIComponent(shareTextPayload)}`, '_blank');
-      if (showToast) showToast('PDF downloaded — opening WhatsApp');
+      if (showToast) showToast('Receipt image downloaded — opening WhatsApp');
     } catch (err) {
-      console.error('Share receipt error:', err);
-      // Last resort if PDF generation itself fails: text-only WhatsApp
+      console.error('Receipt image share error:', err);
+      // Last resort if the image capture itself fails: text-only WhatsApp
       const cleanPhone = contact.phone.replace(/[^0-9]/g, '');
       window.open(`https://wa.me/${cleanPhone}?text=${encodeURIComponent(shareTextPayload)}`, '_blank');
       if (showToast) showToast('Receipt opened in WhatsApp');
+    }
+  };
+
+  // Handle Share (Payment Receipt tab): no image template has been designed for a payment
+  // confirmation yet, so this tab keeps the existing text-only share.
+  const handleSharePaymentText = async () => {
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: `${businessName} Receipt - ${contact.name}`, text: shareTextPayload });
+        if (showToast) showToast('Shared successfully!');
+        return;
+      } catch (err: any) {
+        if (err?.name === 'AbortError') return;
+      }
+    }
+    const cleanPhone = contact.phone.replace(/[^0-9]/g, '');
+    window.open(`https://wa.me/${cleanPhone}?text=${encodeURIComponent(shareTextPayload)}`, '_blank');
+    if (showToast) showToast('Receipt opened in WhatsApp');
+  };
+
+  const handleShare = async () => {
+    setIsSharing(true);
+    try {
+      if (activeTab === 'due') {
+        await handleShareDueReceiptImage();
+      } else {
+        await handleSharePaymentText();
+      }
     } finally {
       setIsSharing(false);
     }
@@ -496,6 +629,29 @@ export const CustomerShareReceiptModal: React.FC<CustomerShareReceiptModalProps>
             </div>
           </div>
         )}
+
+        {/* Hidden receipt card, always mounted (off-screen) so html2canvas has real
+            layout/paint to capture the instant Share is tapped on the Due Receipt tab. */}
+        <div style={{ position: 'fixed', top: 0, left: '-9999px', zIndex: -1 }} aria-hidden="true">
+          <ReceiptTemplate
+            ref={receiptRef}
+            businessName={businessName}
+            businessPhone={businessSettings?.phone}
+            businessLocation={businessSettings?.location}
+            logoUrl={businessSettings?.logoUrl}
+            customerName={contact.name}
+            customerAddress={contact.address}
+            periodTitle={activeMonthDisplay}
+            totalMilk={metrics.milk}
+            avgRate={avgRate}
+            daysTaken={dayStats.daysTaken}
+            missedDaysLabel={dayStats.missedDaysLabel}
+            totalAmount={metrics.amount}
+            totalReceived={metrics.received}
+            totalOutstanding={metrics.totalOutstanding}
+            currencySymbol={businessSettings?.currencySymbol}
+          />
+        </div>
       </div>
     </div>
   );
