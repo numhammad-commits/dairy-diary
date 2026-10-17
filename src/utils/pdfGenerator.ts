@@ -44,6 +44,34 @@ function tryParseMonthTitle(title: string): { year: number; month: number } | nu
 }
 
 // =========================================================================
+// Aspect-ratio-preserving image sizing — jsPDF's addImage always stretches
+// the source bitmap to fill the exact width/height given to it, so any
+// uploaded logo/QR image that isn't already a perfect square gets visibly
+// distorted unless we first measure its real pixel size and fit it into
+// the target box ourselves.
+// =========================================================================
+
+function loadImageNaturalSize(dataUrl: string): Promise<{ width: number; height: number } | null> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve({ width: img.naturalWidth || img.width, height: img.naturalHeight || img.height });
+    img.onerror = () => resolve(null);
+    img.src = dataUrl;
+  });
+}
+
+function computeContainSize(naturalW: number, naturalH: number, maxW: number, maxH: number): { w: number; h: number } {
+  const aspect = naturalW / naturalH || 1;
+  let w = maxW;
+  let h = w / aspect;
+  if (h > maxH) {
+    h = maxH;
+    w = h * aspect;
+  }
+  return { w, h };
+}
+
+// =========================================================================
 // CUSTOMER STATEMENT PDF — the long formal itemized bill: green header, bill
 // number + due-date card, 4 summary stat boxes, carryover reconciliation bar,
 // paginated transaction ledger table, payment accounts + QR, 7-day payment
@@ -148,8 +176,12 @@ export async function generateSawaaPdfDocument(
   if (businessSettings?.logoUrl) {
     try {
       const imgFormat = businessSettings.logoUrl.startsWith('data:image/jpeg') || businessSettings.logoUrl.startsWith('data:image/jpg') ? 'JPEG' : 'PNG';
-      const d = (logoR - 1.5) * 2;
-      doc.addImage(businessSettings.logoUrl, imgFormat, logoCX - d / 2, logoCY - d / 2, d, d);
+      const maxDim = (logoR - 1.5) * 2;
+      const dims = await loadImageNaturalSize(businessSettings.logoUrl);
+      const { w: drawW, h: drawH } = dims
+        ? computeContainSize(dims.width, dims.height, maxDim, maxDim)
+        : { w: maxDim, h: maxDim };
+      doc.addImage(businessSettings.logoUrl, imgFormat, logoCX - drawW / 2, logoCY - drawH / 2, drawW, drawH);
       logoDrawn = true;
     } catch (err) {
       console.warn('Failed to render uploaded logo in PDF, using fallback emblem:', err);
@@ -402,7 +434,13 @@ export async function generateSawaaPdfDocument(
   // image, never a fabricated placeholder graphic on a real financial document)
   // =========================================================================
   const enabledAccounts = getEnabledPaymentAccounts(businessSettings);
-  checkPageBreak(30);
+  const qrAccount = enabledAccounts.find((a) => a.qrCodeUrl);
+  const qrMaxSize = 26;
+  // Reserve extra room when a QR is present: image + two label lines below it
+  // (method name + account title), so neither gets clipped by a page break.
+  const paymentBoxH =
+    enabledAccounts.length === 0 ? 0 : Math.max(enabledAccounts.length * 6 + 6, qrAccount ? 42 : 32);
+  checkPageBreak(enabledAccounts.length === 0 ? 20 : paymentBoxH + 16);
   doc.setTextColor(...GREEN);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(10);
@@ -416,8 +454,6 @@ export async function generateSawaaPdfDocument(
     doc.text('No payment account has been enabled for this business.', margin, yPos);
     yPos += 10;
   } else {
-    const qrAccount = enabledAccounts.find((a) => a.qrCodeUrl);
-    const paymentBoxH = Math.max(enabledAccounts.length * 6 + 6, 32);
     doc.setDrawColor(226, 232, 240);
     doc.roundedRect(margin, yPos, contentWidth, paymentBoxH, 3, 3, 'S');
 
@@ -436,17 +472,33 @@ export async function generateSawaaPdfDocument(
       lineY += 6;
     });
 
-    const qrSize = 24;
-    const qrX = pageWidth - margin - qrSize - 4;
+    const qrX = pageWidth - margin - qrMaxSize - 4;
     const qrY = yPos + 4;
     if (qrAccount?.qrCodeUrl) {
       try {
         const imgFormat = qrAccount.qrCodeUrl.startsWith('data:image/jpeg') || qrAccount.qrCodeUrl.startsWith('data:image/jpg') ? 'JPEG' : 'PNG';
-        doc.addImage(qrAccount.qrCodeUrl, imgFormat, qrX, qrY, qrSize, qrSize);
+        const dims = await loadImageNaturalSize(qrAccount.qrCodeUrl);
+        const { w: drawW, h: drawH } = dims
+          ? computeContainSize(dims.width, dims.height, qrMaxSize, qrMaxSize)
+          : { w: qrMaxSize, h: qrMaxSize };
+        doc.addImage(
+          qrAccount.qrCodeUrl,
+          imgFormat,
+          qrX + (qrMaxSize - drawW) / 2,
+          qrY + (qrMaxSize - drawH) / 2,
+          drawW,
+          drawH
+        );
+        // Our own labels, drawn fresh every time — never dependent on whatever
+        // text (if any) happens to already be baked into the uploaded image.
         doc.setTextColor(...GREEN);
         doc.setFont('helvetica', 'bold');
         doc.setFontSize(6.5);
-        doc.text(`SCAN TO PAY (${qrAccount.name.toUpperCase()})`, qrX + qrSize / 2, qrY + qrSize + 4, { align: 'center' });
+        doc.text(`SCAN TO PAY VIA ${qrAccount.name.toUpperCase()}`, qrX + qrMaxSize / 2, qrY + qrMaxSize + 4, { align: 'center' });
+        doc.setTextColor(71, 85, 105);
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(6);
+        doc.text(`Account: ${qrAccount.accountTitle}`, qrX + qrMaxSize / 2, qrY + qrMaxSize + 8, { align: 'center' });
       } catch (err) {
         console.warn('Failed to render payment QR code in PDF:', err);
       }
@@ -456,12 +508,12 @@ export async function generateSawaaPdfDocument(
       // Settings, instead of silently leaving a gap.
       doc.setDrawColor(203, 213, 225);
       doc.setFillColor(248, 250, 252);
-      doc.roundedRect(qrX, qrY, qrSize, qrSize, 2, 2, 'FD');
+      doc.roundedRect(qrX, qrY, qrMaxSize, qrMaxSize, 2, 2, 'FD');
       doc.setTextColor(148, 163, 184);
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(6);
-      doc.text('No QR Code', qrX + qrSize / 2, qrY + qrSize / 2 - 1, { align: 'center' });
-      doc.text('Uploaded', qrX + qrSize / 2, qrY + qrSize / 2 + 3, { align: 'center' });
+      doc.text('No QR Code', qrX + qrMaxSize / 2, qrY + qrMaxSize / 2 - 1, { align: 'center' });
+      doc.text('Uploaded', qrX + qrMaxSize / 2, qrY + qrMaxSize / 2 + 3, { align: 'center' });
     }
 
     yPos += paymentBoxH + 6;
