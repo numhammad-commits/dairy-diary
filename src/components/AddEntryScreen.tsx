@@ -32,13 +32,20 @@ export const AddEntryScreen: React.FC<AddEntryContext> = ({
 }) => {
   // Requirement 1: Automatically set the date to the actual current device date
   const actualTodayDate = getDeviceTodayDate();
-  
-  // Shift default (Morning before 1pm, Evening after 1pm)
-  const defaultShift: ShiftType = new Date().getHours() < 13 ? 'morning' : 'evening';
+
+  // Shift default: this customer's own most recent entry's shift, or 'morning' if they're new.
+  const defaultShift: ShiftType = useMemo(() => {
+    const customerEntries = (existingEntries || []).filter((e) => e.contactId === customer.id);
+    if (customerEntries.length === 0) return 'morning';
+    const mostRecent = [...customerEntries].sort(
+      (a, b) => b.date.localeCompare(a.date) || b.timestamp.localeCompare(a.timestamp)
+    )[0];
+    return mostRecent.shift;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Milk Type default from customer preference
-  const defaultMilkType: 'other' | 'buffalo' | 'cow' = 
-    (customer.milkTypePref || (customer.id === 'c-01' ? 'other' : 'buffalo')) as any;
+  const defaultMilkType: 'other' | 'buffalo' | 'cow' | 'goat' = customer.milkTypePref || 'buffalo';
 
   // Rate default from customer default rate
   const defaultRate = customer.defaultRate || 240;
@@ -51,7 +58,7 @@ export const AddEntryScreen: React.FC<AddEntryContext> = ({
   const [date, setDate] = useState<string>(actualTodayDate);
   const [shift, setShift] = useState<ShiftType>(defaultShift);
   const [product, setProduct] = useState<string>('Milk');
-  const [milkType, setMilkType] = useState<'other' | 'buffalo' | 'cow'>(defaultMilkType);
+  const [milkType, setMilkType] = useState<'other' | 'buffalo' | 'cow' | 'goat'>(defaultMilkType);
   const [quantity, setQuantity] = useState<string>(defaultQty);
   const [rate, setRate] = useState<string>(defaultRate.toString());
   const [remarks, setRemarks] = useState<string>('');
@@ -346,6 +353,7 @@ export const AddEntryScreen: React.FC<AddEntryContext> = ({
                   <option value="other" className="bg-white text-[#163B32]">📦 Other</option>
                   <option value="buffalo" className="bg-white text-[#163B32]">🥛 Buffalo</option>
                   <option value="cow" className="bg-white text-[#163B32]">🐄 Cow</option>
+                  <option value="goat" className="bg-white text-[#163B32]">🐐 Goat</option>
                 </select>
                 <div className="pointer-events-none absolute right-3 bottom-2 text-[#55756D] text-xs">▼</div>
               </div>

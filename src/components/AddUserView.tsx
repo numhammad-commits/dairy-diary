@@ -47,7 +47,7 @@ export const AddUserView: React.FC<AddUserViewProps> = ({
 
   // Form States
   const [isActive, setIsActive] = useState<boolean>(true);
-  const [milkType, setMilkType] = useState<'buffalo' | 'cow' | 'other'>('buffalo');
+  const [milkType, setMilkType] = useState<'buffalo' | 'cow' | 'other' | 'goat'>('buffalo');
   const [dpSelected, setDpSelected] = useState<boolean>(false);
   const [name, setName] = useState<string>('');
   const [phone, setPhone] = useState<string>('');
@@ -539,10 +539,11 @@ export const AddUserView: React.FC<AddUserViewProps> = ({
                 <Droplet className="w-3.5 h-3.5 text-[#0B8F68]" />
                 Milk Category
               </label>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-4 gap-2">
                 {[
                   { id: 'buffalo', label: 'Buffalo Milk' },
                   { id: 'cow', label: 'Cow Milk' },
+                  { id: 'goat', label: 'Goat Milk' },
                   { id: 'other', label: 'Mix / Other' },
                 ].map((item) => (
                   <button

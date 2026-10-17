@@ -33,7 +33,7 @@ export const EditCustomerScreen: React.FC<EditCustomerScreenProps> = ({
   // Initialize state directly from the canonical contact record
   const initialData = useMemo(() => {
     const roleMode = contact.role === 'buyer' ? 'sell' : 'buy';
-    const initialMilkType = (contact.milkTypePref || (contact.id === 'c-01' ? 'other' : 'buffalo')) as 'buffalo' | 'cow' | 'other';
+    const initialMilkType = (contact.milkTypePref || 'buffalo') as 'buffalo' | 'cow' | 'other' | 'goat';
     const initialRate = contact.defaultRate || 240;
     const initialQty = (contact.fixedQuantity || contact.morningQuotaLiters || 1.0).toString();
     const initialCycle = (contact.billCycle 
@@ -66,7 +66,7 @@ export const EditCustomerScreen: React.FC<EditCustomerScreenProps> = ({
 
   // Form State
   const [isActive, setIsActive] = useState<boolean>(initialData.isActive);
-  const [milkType, setMilkType] = useState<'buffalo' | 'cow' | 'other'>(initialData.milkType);
+  const [milkType, setMilkType] = useState<'buffalo' | 'cow' | 'other' | 'goat'>(initialData.milkType);
   const [name, setName] = useState<string>(initialData.name);
   const [phone, setPhone] = useState<string>(initialData.phone);
   const [address, setAddress] = useState<string>(initialData.address);
@@ -266,8 +266,8 @@ export const EditCustomerScreen: React.FC<EditCustomerScreenProps> = ({
             </div>
           )}
 
-          {/* 1. Customer Category Segmented Selector: [ Buffalo ] [ Cow ] [ Other ] */}
-          <div className="bg-white rounded-2xl p-1 border border-[#D6E9E1] shadow-xs grid grid-cols-3 gap-1">
+          {/* 1. Customer Category Segmented Selector: [ Buffalo ] [ Cow ] [ Goat ] [ Other ] */}
+          <div className="bg-white rounded-2xl p-1 border border-[#D6E9E1] shadow-xs grid grid-cols-4 gap-1">
             <button
               type="button"
               onClick={() => setMilkType('buffalo')}
@@ -293,6 +293,20 @@ export const EditCustomerScreen: React.FC<EditCustomerScreenProps> = ({
               {milkType === 'cow' && <Check className="w-3.5 h-3.5 stroke-[3]" />}
               <Droplet className="w-3.5 h-3.5 fill-current" />
               <span>Cow</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setMilkType('goat')}
+              className={`py-2 px-3 rounded-xl text-xs font-extrabold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                milkType === 'goat'
+                  ? 'bg-[#0B8F68] text-white shadow-xs font-black'
+                  : 'text-[#55756D] hover:text-[#163B32]'
+              }`}
+            >
+              {milkType === 'goat' && <Check className="w-3.5 h-3.5 stroke-[3]" />}
+              <span>🐐</span>
+              <span>Goat</span>
             </button>
 
             <button

@@ -2,7 +2,7 @@ export type ContactRole = 'seller' | 'buyer';
 
 export type ShiftType = 'morning' | 'evening';
 
-export type MilkType = 'buffalo' | 'cow' | 'mix';
+export type MilkType = 'buffalo' | 'cow' | 'mix' | 'goat';
 
 export interface Contact {
   id: string;
@@ -26,7 +26,7 @@ export interface Contact {
   lastActivityTimestamp: string; // e.g. "Today, 07:13 AM" or "01 Oct, 11:38 AM"
   lastActivityIso: string;
   createdAt: string;
-  milkTypePref?: 'buffalo' | 'cow' | 'other';
+  milkTypePref?: 'buffalo' | 'cow' | 'other' | 'goat';
   billCycle?: 'daily' | 'weekly' | 'monthly';
   billDate?: number;
   billTime?: string;

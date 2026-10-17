@@ -134,6 +134,7 @@ export const QuickEntryModal: React.FC<QuickEntryModalProps> = ({
                 <option value="buffalo">Buffalo Milk (Pure)</option>
                 <option value="cow">Cow Milk</option>
                 <option value="mix">Mixed Milk</option>
+                <option value="goat">Goat Milk</option>
               </select>
             </div>
           </div>
