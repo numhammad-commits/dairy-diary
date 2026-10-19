@@ -31,6 +31,8 @@ import { AboutModal } from './components/AboutModal';
 import { EditCustomerScreen } from './components/EditCustomerScreen';
 import { MonthlyBillingModal } from './components/MonthlyBillingModal';
 import { TrackerView } from './components/TrackerView';
+import { NextDayRouteModal } from './components/NextDayRouteModal';
+import { Route } from 'lucide-react';
 
 import {
   Contact,
@@ -182,6 +184,7 @@ export default function App() {
   const [showAddUserModal, setShowAddUserModal] = useState<boolean>(false);
   const [showReminderModal, setShowReminderModal] = useState<boolean>(false);
   const [showBackupModal, setShowBackupModal] = useState<boolean>(false);
+  const [showNextDayRouteModal, setShowNextDayRouteModal] = useState<boolean>(false);
   const [showPremiumModal, setShowPremiumModal] = useState<boolean>(false);
   const [showOutstandingModal, setShowOutstandingModal] = useState<boolean>(false);
   const [showArchitectureModal, setShowArchitectureModal] = useState<boolean>(false);
@@ -405,6 +408,44 @@ export default function App() {
     );
 
     showToast(`Saved ${createdEntries.length} bulk entries successfully!`);
+  };
+
+  // Bulk-creates entries for MULTIPLE different customers at once (Next Day Route),
+  // unlike handleSaveBulkEntries above which is scoped to one customer across many dates.
+  const handleSaveRouteEntries = (routeEntries: Omit<LedgerEntry, 'id'>[]) => {
+    const validEntries = routeEntries.filter(
+      (ne) => !entries.some((e) => e.contactId === ne.contactId && e.date === ne.date && e.shift === ne.shift)
+    );
+    if (validEntries.length === 0) {
+      showToast('⚠️ All selected customers already have a delivery for that date/shift');
+      return;
+    }
+
+    const createdEntries: LedgerEntry[] = validEntries.map((entryData, idx) => ({
+      ...entryData,
+      id: `le-route-${Date.now()}-${idx}`,
+    }));
+    setEntries((prev) => [...createdEntries, ...prev]);
+
+    const dueByContact = new Map<string, number>();
+    createdEntries.forEach((e) => dueByContact.set(e.contactId, (dueByContact.get(e.contactId) || 0) + e.dueAmount));
+
+    setContacts((prev) =>
+      prev.map((c) => {
+        const addedDue = dueByContact.get(c.id);
+        if (addedDue === undefined) return c;
+        const matchingEntry = createdEntries.find((e) => e.contactId === c.id)!;
+        return {
+          ...c,
+          currentMonthDue: (c.currentMonthDue || 0) + addedDue,
+          totalLifetimeDue: (c.totalLifetimeDue || 0) + addedDue,
+          lastActivityTimestamp: `Tomorrow, ${matchingEntry.timestamp}`,
+          lastActivityIso: new Date(`${matchingEntry.date}T00:00:00`).toISOString(),
+        };
+      })
+    );
+
+    showToast('All deliveries for tomorrow saved!');
   };
 
   const handleSettlePayment = (
@@ -734,6 +775,18 @@ export default function App() {
               onTabChange={setActiveFilterTab}
             />
 
+            {/* Next Day Route — one-click bulk delivery entry for tomorrow */}
+            <div className="px-4 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowNextDayRouteModal(true)}
+                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-2xl bg-[#E1F3EA] hover:bg-[#d6ecdf] border border-[#B8E0CC] text-[#0B8F68] text-xs font-bold transition-all cursor-pointer shadow-xs"
+              >
+                <Route className="w-4 h-4" />
+                Next Day Route
+              </button>
+            </div>
+
             {/* Dynamic Contact / Ledger List */}
             <div className="flex-1">
               <ContactLedgerList
@@ -950,6 +1003,18 @@ export default function App() {
           onClose={() => setShowBackupModal(false)}
           onRestoreSuccess={handleReloadFromStorage}
           showToast={showToast}
+        />
+      )}
+
+      {showNextDayRouteModal && (
+        <NextDayRouteModal
+          contacts={contacts}
+          entries={entries}
+          onClose={() => setShowNextDayRouteModal(false)}
+          onConfirm={(routeEntries) => {
+            handleSaveRouteEntries(routeEntries);
+            setShowNextDayRouteModal(false);
+          }}
         />
       )}
 
