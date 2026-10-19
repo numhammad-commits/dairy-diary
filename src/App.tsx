@@ -549,6 +549,18 @@ export default function App() {
     const oldEntry = entries.find((e) => e.id === updatedEntry.id);
     if (!oldEntry) return;
 
+    const isDuplicate = entries.some(
+      (e) =>
+        e.id !== updatedEntry.id &&
+        e.contactId === updatedEntry.contactId &&
+        e.date === updatedEntry.date &&
+        e.shift === updatedEntry.shift
+    );
+    if (isDuplicate) {
+      showToast('Delivery already exists for this customer on this date.');
+      return;
+    }
+
     const dueDiff = updatedEntry.dueAmount - oldEntry.dueAmount;
 
     setEntries((prev) =>

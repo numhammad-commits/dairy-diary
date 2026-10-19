@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { Contact, LedgerEntry, ShiftType, MilkType } from '../types/dairy';
 import { shiftDateString } from '../utils/formatters';
+import { loadPersistedEntries } from '../utils/storage';
 
 interface EditEntryScreenProps {
   entry: LedgerEntry;
@@ -60,6 +61,7 @@ export const EditEntryScreen: React.FC<EditEntryScreenProps> = ({
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<boolean>(false);
   const [showDiscardConfirm, setShowDiscardConfirm] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [showDuplicateModal, setShowDuplicateModal] = useState<boolean>(false);
 
   // Reactive Total Calculation: Quantity × Rate
   const calculatedTotal = useMemo(() => {
@@ -141,6 +143,17 @@ export const EditEntryScreen: React.FC<EditEntryScreenProps> = ({
     const parsedRate = parseFloat(rate);
     if (isNaN(parsedRate) || parsedRate < 0) {
       setErrorMessage('Please enter a valid milk rate.');
+      return;
+    }
+
+    // Exact-match duplicate guard (contactId + date + shift), excluding this entry itself.
+    // Reads straight from storage (same fallback pattern AddEntryScreen already uses) since
+    // this screen isn't handed the full entries array as a prop.
+    const isDuplicate = loadPersistedEntries().some(
+      (e) => e.id !== entry.id && e.contactId === entry.contactId && e.date === date && e.shift === shift
+    );
+    if (isDuplicate) {
+      setShowDuplicateModal(true);
       return;
     }
 
@@ -545,6 +558,36 @@ export const EditEntryScreen: React.FC<EditEntryScreenProps> = ({
                 className="flex-1 py-2.5 px-3 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-black shadow-xs cursor-pointer text-glass-lift"
               >
                 Discard
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 6. ERROR DIALOG: DELIVERY ALREADY ENTERED                                  */}
+      {/* ========================================================================= */}
+      {showDuplicateModal && (
+        <div className="fixed inset-0 z-60 bg-black/60 backdrop-blur-2xs flex items-center justify-center p-4 animate-in fade-in select-none">
+          <div className="bg-white rounded-3xl p-5 max-w-xs w-full shadow-2xl border border-rose-200 text-center animate-in zoom-in-95">
+            <div className="w-12 h-12 rounded-2xl bg-rose-100 text-rose-700 flex items-center justify-center mx-auto mb-3">
+              <AlertCircle className="w-6 h-6 stroke-[2.2]" />
+            </div>
+            <h3 className="text-base font-extrabold text-slate-900">
+              ⚠️ Delivery Already Entered
+            </h3>
+            <p className="text-xs text-slate-600 mt-2 leading-relaxed">
+              Delivery already exists for this customer on{' '}
+              <span className="font-bold text-slate-800">{formattedDateDisplay}</span> (
+              {shift === 'morning' ? 'Morning Shift' : 'Evening Shift'}).
+            </p>
+            <div className="mt-4">
+              <button
+                type="button"
+                onClick={() => setShowDuplicateModal(false)}
+                className="w-full py-2.5 rounded-xl bg-[#1E5631] text-white text-xs font-extrabold hover:bg-emerald-800 transition-colors shadow-sm cursor-pointer"
+              >
+                Understood
               </button>
             </div>
           </div>

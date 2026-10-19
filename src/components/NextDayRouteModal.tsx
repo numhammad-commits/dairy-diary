@@ -73,6 +73,7 @@ export const NextDayRouteModal: React.FC<NextDayRouteModalProps> = ({
   };
 
   const selectedRows = rows.filter((r) => selectedIds.has(r.contact.id));
+  const totalLiters = selectedRows.reduce((sum, r) => sum + r.qty, 0);
   const totalAmount = selectedRows.reduce((sum, r) => sum + r.amount, 0);
 
   const handleConfirm = () => {
@@ -199,7 +200,9 @@ export const NextDayRouteModal: React.FC<NextDayRouteModalProps> = ({
         <div className="px-4 py-3.5 border-t border-[#D6E9E1] bg-white/70 shrink-0 space-y-2.5">
           <div className="flex items-center justify-between text-xs font-bold text-[#55756D]">
             <span>{selectedRows.length} customer{selectedRows.length !== 1 ? 's' : ''} selected</span>
-            <span className="text-sm font-black text-[#163B32]">Total: {formatPKR(totalAmount)}</span>
+            <span className="text-sm font-black text-[#163B32]">
+              Total: {totalLiters.toFixed(1)} L | {formatPKR(totalAmount)}
+            </span>
           </div>
           <button
             type="button"

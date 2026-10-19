@@ -15,6 +15,7 @@ import {
   INITIAL_BUSINESS_SETTINGS,
   INITIAL_PAYMENT_RECORDS,
 } from '../data/mockDairyData';
+import { parseEntryDateTime } from './formatters';
 
 const KEYS = {
   CONTACTS: 'dairy_diary_contacts_v2',
@@ -66,6 +67,36 @@ export function savePersistedContacts(contacts: Contact[]): void {
   }
 }
 
+// Exact match only (contactId + date + shift). Keeps the entry with the latest
+// time-of-day on that date (same date, so comparing timestamps is the real "most
+// recent" signal), drops the rest. Preserves original array order.
+export function dedupeLedgerEntries(entries: LedgerEntry[]): LedgerEntry[] {
+  const groups = new Map<string, LedgerEntry[]>();
+  entries.forEach((e) => {
+    const key = `${e.contactId}|${e.date}|${e.shift}`;
+    const arr = groups.get(key);
+    if (arr) arr.push(e);
+    else groups.set(key, [e]);
+  });
+
+  const winnerIds = new Set<string>();
+  groups.forEach((group) => {
+    if (group.length === 1) {
+      winnerIds.add(group[0].id);
+      return;
+    }
+    const winner = group.reduce((latest, candidate) =>
+      parseEntryDateTime(candidate.date, candidate.timestamp).getTime() >
+      parseEntryDateTime(latest.date, latest.timestamp).getTime()
+        ? candidate
+        : latest
+    );
+    winnerIds.add(winner.id);
+  });
+
+  return entries.filter((e) => winnerIds.has(e.id));
+}
+
 // 2. Ledger Entries Persistence
 export function loadPersistedEntries(): LedgerEntry[] {
   try {
@@ -73,7 +104,11 @@ export function loadPersistedEntries(): LedgerEntry[] {
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed;
+        const deduped = dedupeLedgerEntries(parsed);
+        if (deduped.length !== parsed.length) {
+          savePersistedEntries(deduped); // persist the cleanup once; a no-op thereafter
+        }
+        return deduped;
       }
     }
   } catch (e) {
