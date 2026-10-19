@@ -56,8 +56,11 @@ export function formatDairyReceiptText(opts: ReceiptTextOptions): string {
 
 export function formatLiters(liters: number): string {
   if (liters === undefined || liters === null || isNaN(liters)) return '0 L';
-  const formatted = Number.isInteger(liters) ? liters.toString() : liters.toFixed(1);
-  return `${formatted} L`;
+  // Round to 3 decimals only to kill floating-point noise (e.g. 0.1 + 0.2), then
+  // convert back to a Number so trailing zeros are dropped naturally — 1.25 stays
+  // "1.25", 0.75 stays "0.75", 2 stays "2", never truncated to 1 decimal place.
+  const clean = Number(liters.toFixed(3));
+  return `${clean} L`;
 }
 
 export function formatTime24(date: Date = new Date()): string {

@@ -12,7 +12,7 @@ import {
   X
 } from 'lucide-react';
 import { Contact, LedgerEntry, ShiftType, MilkType } from '../types/dairy';
-import { getDeviceTodayDate, shiftMonthKey } from '../utils/formatters';
+import { getDeviceTodayDate, shiftMonthKey, formatLiters } from '../utils/formatters';
 
 interface BulkEntryModalProps {
   contact: Contact;
@@ -512,7 +512,7 @@ export const BulkEntryModal: React.FC<BulkEntryModalProps> = ({
                 </span>
               </div>
               <span className="text-xs font-bold text-[#55756D]">
-                {parsedQty.toFixed(1)}L @ Rs{parsedRate.toFixed(1)}
+                {formatLiters(parsedQty)} @ Rs{parsedRate.toFixed(1)}
               </span>
             </div>
 
@@ -718,14 +718,14 @@ export const BulkEntryModal: React.FC<BulkEntryModalProps> = ({
                 <div className="flex items-center gap-1.5">
                   <span className="w-2.5 h-2.5 rounded-full bg-[#0B8F68] inline-block shrink-0" />
                   <span className="font-extrabold text-xs text-[#163B32] truncate">
-                    {parsedQty.toFixed(0)}L @ Rs{parsedRate.toFixed(0)}
+                    {formatLiters(parsedQty)} @ Rs{parsedRate.toFixed(0)}
                   </span>
                 </div>
                 <div className="text-[11px] text-[#55756D] font-medium">
                   {metrics.morningCount} ☀️ · {metrics.eveningCount} 🌙 ({metrics.totalShifts})
                 </div>
                 <div className="text-[11px] font-bold text-[#163B32]">
-                  {metrics.totalLiters.toFixed(0)}L · Rs{metrics.totalAmount.toLocaleString('en-PK')}
+                  {formatLiters(metrics.totalLiters)} · Rs{metrics.totalAmount.toLocaleString('en-PK')}
                 </div>
               </div>
 

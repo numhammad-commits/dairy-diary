@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { X, Route, Check, Users } from 'lucide-react';
 import { Contact, LedgerEntry, MilkType } from '../types/dairy';
-import { getDeviceTodayDate, shiftDateString, formatPKR } from '../utils/formatters';
+import { getDeviceTodayDate, shiftDateString, formatPKR, formatLiters } from '../utils/formatters';
 
 interface NextDayRouteModalProps {
   contacts: Contact[];
@@ -170,7 +170,7 @@ export const NextDayRouteModal: React.FC<NextDayRouteModalProps> = ({
                           <div className="min-w-0">
                             <p className="text-sm font-bold text-[#163B32] truncate">{r.contact.name}</p>
                             <p className="text-[11px] text-[#55756D] font-medium">
-                              {r.qty.toFixed(1)} L · Rs{r.rate.toFixed(0)}/L
+                              {formatLiters(r.qty)} · Rs{r.rate.toFixed(0)}/L
                             </p>
                           </div>
                         </div>
@@ -205,7 +205,7 @@ export const NextDayRouteModal: React.FC<NextDayRouteModalProps> = ({
                         <div className="min-w-0">
                           <p className="text-sm font-bold text-[#163B32] truncate">{r.contact.name}</p>
                           <p className="text-[11px] text-[#55756D] font-medium">
-                            {r.qty.toFixed(1)} L · Rs{r.rate.toFixed(0)}/L
+                            {formatLiters(r.qty)} · Rs{r.rate.toFixed(0)}/L
                           </p>
                         </div>
                       </div>
@@ -227,7 +227,7 @@ export const NextDayRouteModal: React.FC<NextDayRouteModalProps> = ({
               {checkedPendingRows.length} customer{checkedPendingRows.length !== 1 ? 's' : ''} selected
             </span>
             <span className="text-sm font-black text-[#163B32]">
-              Total: {totalLiters.toFixed(1)} L | {formatPKR(totalAmount)}
+              Total: {formatLiters(totalLiters)} | {formatPKR(totalAmount)}
             </span>
           </div>
           <button
