@@ -73,8 +73,11 @@ export const NextDayRouteModal: React.FC<NextDayRouteModalProps> = ({
   };
 
   const selectedRows = rows.filter((r) => selectedIds.has(r.contact.id));
-  const totalLiters = selectedRows.reduce((sum, r) => sum + r.qty, 0);
-  const totalAmount = selectedRows.reduce((sum, r) => sum + r.amount, 0);
+  // Footer shows the full day's volume: checked (new) rows PLUS rows already saved
+  // earlier ("Already added") — the save logic above still only uses selectedRows.
+  const footerRows = rows.filter((r) => selectedIds.has(r.contact.id) || r.alreadyExists);
+  const totalLiters = footerRows.reduce((sum, r) => sum + r.qty, 0);
+  const totalAmount = footerRows.reduce((sum, r) => sum + r.amount, 0);
 
   const handleConfirm = () => {
     if (selectedRows.length === 0) return;
