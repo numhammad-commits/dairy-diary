@@ -38,12 +38,24 @@ export const NextDayRouteModal: React.FC<NextDayRouteModalProps> = ({
   const rows = useMemo(
     () =>
       eligibleContacts.map((c) => {
-        const qty = c.fixedQuantity || c.morningQuotaLiters || 2.0;
-        const rate = c.defaultRate || 240;
-        const alreadyExists = entries.some(
+        // If a real entry already exists for tomorrow, show its ACTUAL saved
+        // quantity/rate/amount — not the customer's default — since the two can
+        // differ (e.g. a one-off larger order).
+        const matchingEntry = entries.find(
           (e) => e.contactId === c.id && e.date === tomorrowDate && e.shift === 'morning'
         );
-        return { contact: c, qty, rate, amount: Math.round(qty * rate), alreadyExists };
+        if (matchingEntry) {
+          return {
+            contact: c,
+            qty: matchingEntry.liters,
+            rate: matchingEntry.ratePerLiter,
+            amount: matchingEntry.totalAmount,
+            alreadyExists: true,
+          };
+        }
+        const qty = c.fixedQuantity || c.morningQuotaLiters || 2.0;
+        const rate = c.defaultRate || 240;
+        return { contact: c, qty, rate, amount: Math.round(qty * rate), alreadyExists: false };
       }),
     [eligibleContacts, entries, tomorrowDate]
   );
@@ -66,14 +78,11 @@ export const NextDayRouteModal: React.FC<NextDayRouteModalProps> = ({
 
   const checkedPendingRows = pendingRows.filter((r) => selectedIds.has(r.contact.id));
 
-  // Already-added liters/amount are a fixed baseline that's always included; checked
-  // Pending liters/amount are added on top and change live as rows are (un)checked.
-  const alreadyAddedLiters = alreadyAddedRows.reduce((sum, r) => sum + r.qty, 0);
-  const alreadyAddedAmount = alreadyAddedRows.reduce((sum, r) => sum + r.amount, 0);
-  const checkedLiters = checkedPendingRows.reduce((sum, r) => sum + r.qty, 0);
-  const checkedAmount = checkedPendingRows.reduce((sum, r) => sum + r.amount, 0);
-  const totalLiters = alreadyAddedLiters + checkedLiters;
-  const totalAmount = alreadyAddedAmount + checkedAmount;
+  // Footer total reflects ONLY what's already committed for tomorrow (Already Added).
+  // Pending customers are shown with checkboxes so they can still be added via Confirm,
+  // but they're intentionally excluded from this total per the latest requirement.
+  const totalLiters = alreadyAddedRows.reduce((sum, r) => sum + r.qty, 0);
+  const totalAmount = alreadyAddedRows.reduce((sum, r) => sum + r.amount, 0);
 
   const handleConfirm = () => {
     if (checkedPendingRows.length === 0) return;
