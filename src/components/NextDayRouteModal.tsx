@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
-import { X, Route, Sun, Moon, Check, Users } from 'lucide-react';
-import { Contact, LedgerEntry, MilkType, ShiftType } from '../types/dairy';
+import { X, Route, Check, Users } from 'lucide-react';
+import { Contact, LedgerEntry, MilkType } from '../types/dairy';
 import { getDeviceTodayDate, shiftDateString, formatPKR } from '../utils/formatters';
 
 interface NextDayRouteModalProps {
@@ -26,44 +26,36 @@ export const NextDayRouteModal: React.FC<NextDayRouteModalProps> = ({
   onConfirm,
 }) => {
   const tomorrowDate = useMemo(() => shiftDateString(getDeviceTodayDate(), 1), []);
-  const [shift, setShift] = useState<ShiftType>('morning');
 
   // Only active buyer (customer) contacts are eligible for a delivery route —
   // sellers are farmers the business buys from, not delivery customers.
+  // Shift is always 'morning' — the route is a single daily list, no shift toggle.
   const eligibleContacts = useMemo(
     () => contacts.filter((c) => c.role === 'buyer' && c.status === 'active'),
     [contacts]
   );
 
-  // Rows re-derive "already exists" whenever the shift toggle changes, so switching
-  // Morning/Evening always reflects the real duplicate state for that shift.
   const rows = useMemo(
     () =>
       eligibleContacts.map((c) => {
         const qty = c.fixedQuantity || c.morningQuotaLiters || 2.0;
         const rate = c.defaultRate || 240;
         const alreadyExists = entries.some(
-          (e) => e.contactId === c.id && e.date === tomorrowDate && e.shift === shift
+          (e) => e.contactId === c.id && e.date === tomorrowDate && e.shift === 'morning'
         );
         return { contact: c, qty, rate, amount: Math.round(qty * rate), alreadyExists };
       }),
-    [eligibleContacts, entries, tomorrowDate, shift]
+    [eligibleContacts, entries, tomorrowDate]
   );
+
+  const pendingRows = rows.filter((r) => !r.alreadyExists);
+  const alreadyAddedRows = rows.filter((r) => r.alreadyExists);
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(
-    () => new Set(rows.filter((r) => !r.alreadyExists).map((r) => r.contact.id))
+    () => new Set(pendingRows.map((r) => r.contact.id))
   );
 
-  // Re-sync the default selection whenever the shift changes (a different shift has a
-  // different set of "already exists" rows), so switching Morning/Evening never leaves a
-  // stale selection checked against the wrong shift.
-  React.useEffect(() => {
-    setSelectedIds(new Set(rows.filter((r) => !r.alreadyExists).map((r) => r.contact.id)));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shift]);
-
-  const toggleContact = (contactId: string, alreadyExists: boolean) => {
-    if (alreadyExists) return;
+  const toggleContact = (contactId: string) => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
       if (next.has(contactId)) next.delete(contactId);
@@ -72,24 +64,27 @@ export const NextDayRouteModal: React.FC<NextDayRouteModalProps> = ({
     });
   };
 
-  const selectedRows = rows.filter((r) => selectedIds.has(r.contact.id));
-  // Footer shows the full day's volume: checked (new) rows PLUS rows already saved
-  // earlier ("Already added") — the save logic above still only uses selectedRows.
-  const footerRows = rows.filter((r) => selectedIds.has(r.contact.id) || r.alreadyExists);
-  const totalLiters = footerRows.reduce((sum, r) => sum + r.qty, 0);
-  const totalAmount = footerRows.reduce((sum, r) => sum + r.amount, 0);
+  const checkedPendingRows = pendingRows.filter((r) => selectedIds.has(r.contact.id));
+
+  // Already-added liters/amount are a fixed baseline that's always included; checked
+  // Pending liters/amount are added on top and change live as rows are (un)checked.
+  const alreadyAddedLiters = alreadyAddedRows.reduce((sum, r) => sum + r.qty, 0);
+  const alreadyAddedAmount = alreadyAddedRows.reduce((sum, r) => sum + r.amount, 0);
+  const checkedLiters = checkedPendingRows.reduce((sum, r) => sum + r.qty, 0);
+  const checkedAmount = checkedPendingRows.reduce((sum, r) => sum + r.amount, 0);
+  const totalLiters = alreadyAddedLiters + checkedLiters;
+  const totalAmount = alreadyAddedAmount + checkedAmount;
 
   const handleConfirm = () => {
-    if (selectedRows.length === 0) return;
-    const timeStr = shift === 'morning' ? '07:00 AM' : '07:00 PM';
+    if (checkedPendingRows.length === 0) return;
 
-    const routeEntries: Omit<LedgerEntry, 'id'>[] = selectedRows.map((r) => ({
+    const routeEntries: Omit<LedgerEntry, 'id'>[] = checkedPendingRows.map((r) => ({
       contactId: r.contact.id,
       contactName: r.contact.name,
       contactRole: r.contact.role,
       date: tomorrowDate,
-      timestamp: timeStr,
-      shift,
+      timestamp: '07:00 AM',
+      shift: 'morning',
       milkType: (r.contact.milkTypePref || 'buffalo') as MilkType,
       liters: r.qty,
       ratePerLiter: r.rate,
@@ -130,79 +125,98 @@ export const NextDayRouteModal: React.FC<NextDayRouteModalProps> = ({
           </button>
         </div>
 
-        {/* Shift Toggle */}
-        <div className="px-4 pt-3 pb-2 shrink-0">
-          <div className="bg-slate-100 p-1 rounded-full flex items-center border border-[#D6E9E1] shadow-xs">
-            <button
-              type="button"
-              onClick={() => setShift('morning')}
-              className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-full text-xs font-bold transition-all cursor-pointer ${
-                shift === 'morning' ? 'bg-[#0B8F68] text-white shadow-xs' : 'text-[#55756D]'
-              }`}
-            >
-              <Sun className="w-3.5 h-3.5" /> Morning
-            </button>
-            <button
-              type="button"
-              onClick={() => setShift('evening')}
-              className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-full text-xs font-bold transition-all cursor-pointer ${
-                shift === 'evening' ? 'bg-[#0B8F68] text-white shadow-xs' : 'text-[#55756D]'
-              }`}
-            >
-              <Moon className="w-3.5 h-3.5" /> Evening
-            </button>
-          </div>
-        </div>
-
-        {/* Customer List */}
-        <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-2 space-y-2">
+        {/* Customer List: grouped into Pending / Already Added */}
+        <div className="flex-1 min-h-0 overflow-y-auto px-4 pt-3 pb-2 space-y-2">
           {rows.length === 0 ? (
             <div className="py-10 text-center">
               <Users className="w-8 h-8 text-[#55756D]/60 mx-auto mb-2" />
               <p className="text-sm font-bold text-[#163B32]">No active customers found</p>
             </div>
           ) : (
-            rows.map((r) => {
-              const isChecked = selectedIds.has(r.contact.id);
-              return (
-                <div
-                  key={r.contact.id}
-                  onClick={() => toggleContact(r.contact.id, r.alreadyExists)}
-                  className={`flex items-center justify-between gap-2.5 bg-white rounded-2xl px-3 py-2.5 border transition-all ${
-                    r.alreadyExists
-                      ? 'border-[#D6E9E1] opacity-50 cursor-not-allowed'
-                      : 'border-[#D6E9E1] hover:border-[#0B8F68]/40 cursor-pointer active:scale-[0.99]'
-                  }`}
-                >
-                  <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                    <div
-                      className={`w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 transition-all ${
-                        isChecked ? 'bg-[#0B8F68] border-[#0B8F68]' : 'bg-white border-[#D6E9E1]'
-                      }`}
-                    >
-                      {isChecked && <Check className="w-3.5 h-3.5 text-white stroke-[3]" />}
-                    </div>
-                    <div className="min-w-0">
-                      <p className="text-sm font-bold text-[#163B32] truncate">{r.contact.name}</p>
-                      <p className="text-[11px] text-[#55756D] font-medium">
-                        {r.qty.toFixed(1)} L · Rs{r.rate.toFixed(0)}/L
-                        {r.alreadyExists && (
-                          <span className="ml-1.5 text-amber-600 font-bold">Already added</span>
-                        )}
-                      </p>
-                    </div>
+            <>
+              {pendingRows.length > 0 && (
+                <>
+                  <div className="flex items-center gap-1.5 px-1">
+                    <span className="text-[11px] font-black uppercase tracking-wider text-[#0B8F68]">
+                      Pending
+                    </span>
+                    <span className="text-[10px] font-bold text-[#55756D]">({pendingRows.length})</span>
                   </div>
-                  <span className="text-xs font-black text-[#163B32] shrink-0">{formatPKR(r.amount)}</span>
-                </div>
-              );
-            })
+                  {pendingRows.map((r) => {
+                    const isChecked = selectedIds.has(r.contact.id);
+                    return (
+                      <div
+                        key={r.contact.id}
+                        onClick={() => toggleContact(r.contact.id)}
+                        className="flex items-center justify-between gap-2.5 bg-white rounded-2xl px-3 py-2.5 border border-[#D6E9E1] hover:border-[#0B8F68]/40 transition-all cursor-pointer active:scale-[0.99]"
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                          <div
+                            className={`w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 transition-all ${
+                              isChecked ? 'bg-[#0B8F68] border-[#0B8F68]' : 'bg-white border-[#D6E9E1]'
+                            }`}
+                          >
+                            {isChecked && <Check className="w-3.5 h-3.5 text-white stroke-[3]" />}
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-sm font-bold text-[#163B32] truncate">{r.contact.name}</p>
+                            <p className="text-[11px] text-[#55756D] font-medium">
+                              {r.qty.toFixed(1)} L · Rs{r.rate.toFixed(0)}/L
+                            </p>
+                          </div>
+                        </div>
+                        <span className="text-xs font-black text-[#163B32] shrink-0">
+                          {formatPKR(r.amount)}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </>
+              )}
+
+              {alreadyAddedRows.length > 0 && (
+                <>
+                  <div className="flex items-center gap-1.5 px-1 pt-2">
+                    <span className="text-[11px] font-black uppercase tracking-wider text-amber-600">
+                      Already Added
+                    </span>
+                    <span className="text-[10px] font-bold text-[#55756D]">
+                      ({alreadyAddedRows.length})
+                    </span>
+                  </div>
+                  {alreadyAddedRows.map((r) => (
+                    <div
+                      key={r.contact.id}
+                      className="flex items-center justify-between gap-2.5 bg-white rounded-2xl px-3 py-2.5 border border-[#D6E9E1] opacity-50 cursor-not-allowed"
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                        <div className="w-5 h-5 rounded-md border-2 bg-slate-200 border-slate-300 flex items-center justify-center shrink-0">
+                          <Check className="w-3.5 h-3.5 text-slate-500 stroke-[3]" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-sm font-bold text-[#163B32] truncate">{r.contact.name}</p>
+                          <p className="text-[11px] text-[#55756D] font-medium">
+                            {r.qty.toFixed(1)} L · Rs{r.rate.toFixed(0)}/L
+                          </p>
+                        </div>
+                      </div>
+                      <span className="text-xs font-black text-[#163B32] shrink-0">
+                        {formatPKR(r.amount)}
+                      </span>
+                    </div>
+                  ))}
+                </>
+              )}
+            </>
           )}
         </div>
 
         {/* Footer */}
         <div className="px-4 py-3.5 border-t border-[#D6E9E1] bg-white/70 shrink-0 space-y-2.5">
           <div className="flex items-center justify-between text-xs font-bold text-[#55756D]">
-            <span>{selectedRows.length} customer{selectedRows.length !== 1 ? 's' : ''} selected</span>
+            <span>
+              {checkedPendingRows.length} customer{checkedPendingRows.length !== 1 ? 's' : ''} selected
+            </span>
             <span className="text-sm font-black text-[#163B32]">
               Total: {totalLiters.toFixed(1)} L | {formatPKR(totalAmount)}
             </span>
@@ -210,7 +224,7 @@ export const NextDayRouteModal: React.FC<NextDayRouteModalProps> = ({
           <button
             type="button"
             onClick={handleConfirm}
-            disabled={selectedRows.length === 0}
+            disabled={checkedPendingRows.length === 0}
             className="w-full py-3.5 rounded-2xl bg-[#0B8F68] hover:bg-[#087A5A] active:bg-[#066B4D] disabled:opacity-40 disabled:cursor-not-allowed text-white font-black text-sm tracking-tight transition-all cursor-pointer shadow-sm"
           >
             Confirm Deliveries for Tomorrow
