@@ -207,10 +207,11 @@ export const ContactLedgerList: React.FC<ContactLedgerListProps> = ({
                 >
                   {initial}
                 </div>
-                {/* Active indicator dot matching activity */}
+                {/* Active indicator dot: green if this customer has an entry today, red otherwise */}
                 <span
-                  className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 border-2 border-white rounded-full"
-                  style={{ backgroundColor: avatarBg }}
+                  className={`absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 border-2 border-white rounded-full ${
+                    hasEntryToday ? 'bg-green-500' : 'bg-red-500'
+                  }`}
                 />
               </div>
 

@@ -233,8 +233,8 @@ export function formatRelativeActivityTime(entryDate: Date, timeStr?: string): s
   ).getTime();
   const calendarDaysDiff = Math.round((nowMidnight - entryMidnight) / (24 * 60 * 60 * 1000));
 
-  // 1. Same calendar day (or future entry within same day)
-  if (calendarDaysDiff <= 0) {
+  // 1. Same calendar day
+  if (calendarDaysDiff === 0) {
     if (diffMins < 1 && diffMs >= 0) {
       return 'Just now';
     }
@@ -249,6 +249,11 @@ export function formatRelativeActivityTime(entryDate: Date, timeStr?: string): s
     return `Yesterday, ${displayTime}`;
   }
 
+  // 2b. Tomorrow (1 calendar day in the future)
+  if (calendarDaysDiff === -1) {
+    return `Tomorrow, ${displayTime}`;
+  }
+
   // 3. 2 to 6 calendar days ago
   if (calendarDaysDiff >= 2 && calendarDaysDiff <= 6) {
     return `${calendarDaysDiff} days ago`;
@@ -258,6 +263,14 @@ export function formatRelativeActivityTime(entryDate: Date, timeStr?: string): s
   const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const monthName = months[entryDate.getMonth()];
   const dayStr = String(entryDate.getDate()).padStart(2, '0');
+
+  // 4b. Any future date beyond tomorrow — "[Mon DD], [Time]" (plus year if it differs)
+  if (calendarDaysDiff < 0) {
+    if (now.getFullYear() < entryDate.getFullYear()) {
+      return `${monthName} ${dayStr}, ${entryDate.getFullYear()}, ${displayTime}`;
+    }
+    return `${monthName} ${dayStr}, ${displayTime}`;
+  }
 
   // 1 year or more (different calendar year or 365+ days)
   if (now.getFullYear() > entryDate.getFullYear() || calendarDaysDiff >= 365) {
