@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { MobileFrame } from './components/MobileFrame';
 import { SawaaLogo } from './components/SawaaLogo';
 import { TopAppBar } from './components/TopAppBar';
@@ -75,6 +75,17 @@ import {
   loadPersistedPremiumStatus,
   savePersistedPremiumStatus,
 } from './utils/storage';
+
+// Shared hardware-back-button stack (matching helper duplicated in
+// ContactDetailModal.tsx and EditEntryScreen.tsx, since there's no existing
+// shared-utils file in this task's write access). Any open overlay anywhere
+// in the app pushes its own close-handler here; the single popstate listener
+// below always closes whichever one is currently on top, one level at a time.
+function getBackStack(): Array<() => void> {
+  const w = window as any;
+  if (!w.__ddBackStack) w.__ddBackStack = [];
+  return w.__ddBackStack;
+}
 
 export default function App() {
   // Brief in-app splash shown on first load, under the (frozen) logo mark.
@@ -216,6 +227,81 @@ export default function App() {
       console.warn('Billing prompt check error:', e);
     }
   }, [currentMonthKey]);
+
+  // Hardware back button / swipe-back gesture support. Single app-wide
+  // popstate listener: pops whichever close-handler is on top of the shared
+  // stack (pushed by this effect below, or by ContactDetailModal.tsx /
+  // EditEntryScreen.tsx for their own nested overlays) and calls it.
+  useEffect(() => {
+    const handlePopState = () => {
+      const w = window as any;
+      if (w.__ddSyntheticBack) {
+        w.__ddSyntheticBack = false;
+        return;
+      }
+      const stack = getBackStack();
+      const top = stack.pop();
+      if (top) top();
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  // Priority-ordered: the first truthy one here is what hardware back closes
+  // next. Non-'home' tabs collapse to a single "back to Home" step rather
+  // than replaying every tab visited.
+  const closeTopOverlay = () => {
+    if (editingContact) { setEditingContact(null); return; }
+    if (selectedContact) { setSelectedContact(null); return; }
+    if (quickAddContact) { setQuickAddContact(null); return; }
+    if (showAddUserModal) { setShowAddUserModal(false); return; }
+    if (showDrawer) { setShowDrawer(false); return; }
+    if (monthlyBillingState.isOpen) { setMonthlyBillingState((prev) => ({ ...prev, isOpen: false })); return; }
+    if (showBackupModal) { setShowBackupModal(false); return; }
+    if (showReminderModal) { setShowReminderModal(false); return; }
+    if (showNextDayRouteModal) { setShowNextDayRouteModal(false); return; }
+    if (showPremiumModal) { setShowPremiumModal(false); return; }
+    if (showOutstandingModal) { setShowOutstandingModal(false); return; }
+    if (showArchitectureModal) { setShowArchitectureModal(false); return; }
+    if (showCalculatorModal) { setShowCalculatorModal(false); return; }
+    if (showPaymentHistoryModal) { setShowPaymentHistoryModal(false); return; }
+    if (showAboutModal) { setShowAboutModal(false); return; }
+    if (activeNavTab !== 'home') { setActiveNavTab('home'); return; }
+  };
+
+  const isAnyOverlayOpen =
+    !!editingContact || !!selectedContact || !!quickAddContact || showAddUserModal ||
+    showDrawer || monthlyBillingState.isOpen || showBackupModal || showReminderModal ||
+    showNextDayRouteModal || showPremiumModal || showOutstandingModal || showArchitectureModal ||
+    showCalculatorModal || showPaymentHistoryModal || showAboutModal || activeNavTab !== 'home';
+
+  const closeTopOverlayRef = useRef(closeTopOverlay);
+  closeTopOverlayRef.current = closeTopOverlay;
+  const stableBackHandlerRef = useRef(() => closeTopOverlayRef.current());
+  const wasOverlayOpenRef = useRef(false);
+  const isFirstOverlayCheckRef = useRef(true);
+
+  useEffect(() => {
+    if (isFirstOverlayCheckRef.current) {
+      // Skip the very first run so a deep-linked `?tab=` initial load doesn't
+      // push a spurious history entry.
+      isFirstOverlayCheckRef.current = false;
+      wasOverlayOpenRef.current = isAnyOverlayOpen;
+      return;
+    }
+    const stack = getBackStack();
+    if (isAnyOverlayOpen && !wasOverlayOpenRef.current) {
+      stack.push(stableBackHandlerRef.current);
+      window.history.pushState({ ddBack: true }, '');
+    } else if (!isAnyOverlayOpen && wasOverlayOpenRef.current) {
+      if (stack[stack.length - 1] === stableBackHandlerRef.current) {
+        stack.pop();
+        (window as any).__ddSyntheticBack = true;
+        window.history.back();
+      }
+    }
+    wasOverlayOpenRef.current = isAnyOverlayOpen;
+  }, [isAnyOverlayOpen]);
 
   // Trigger Toast Notification helper
   const showToast = (msg: string) => {
@@ -917,11 +1003,13 @@ export default function App() {
       </div>
 
       {/* 3. Persistent Sticky Bottom Navigation Bar (Permanently pinned to viewport bottom) */}
-      <BottomNavBar
-        activeTab={activeNavTab}
-        onTabSelect={(tab) => setActiveNavTab(tab)}
-        onOpenAddUser={() => setShowAddUserModal(true)}
-      />
+      <div style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
+        <BottomNavBar
+          activeTab={activeNavTab}
+          onTabSelect={(tab) => setActiveNavTab(tab)}
+          onOpenAddUser={() => setShowAddUserModal(true)}
+        />
+      </div>
 
       {/* Toast Notification */}
       {toastMessage && (

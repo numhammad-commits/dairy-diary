@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   ArrowLeft, 
   Trash2, 
@@ -13,6 +13,14 @@ import {
 import { Contact, LedgerEntry, ShiftType, MilkType } from '../types/dairy';
 import { shiftDateString } from '../utils/formatters';
 import { loadPersistedEntries } from '../utils/storage';
+
+// Shared hardware-back-button stack (same helper duplicated in App.tsx and
+// ContactDetailModal.tsx).
+function getBackStack(): Array<() => void> {
+  const w = window as any;
+  if (!w.__ddBackStack) w.__ddBackStack = [];
+  return w.__ddBackStack;
+}
 
 interface EditEntryScreenProps {
   entry: LedgerEntry;
@@ -104,6 +112,45 @@ export const EditEntryScreen: React.FC<EditEntryScreenProps> = ({
       onBack();
     }
   };
+
+  // Hardware back button: pushes one history entry for this whole screen on
+  // mount. Each press closes whichever of the 3 nested dialogs is open
+  // (duplicate/delete/discard), most-recent first; with none open, it runs
+  // the exact same dirty-check as the in-app back arrow above, so an unsaved
+  // edit still prompts "Discard changes?" instead of silently closing. If
+  // that press didn't close the whole screen — a dialog was dismissed, or
+  // the discard prompt just opened — the entry is immediately re-pushed so
+  // the NEXT back-press still has something to act on.
+  const closeTopDialogRef = useRef(() => {});
+  closeTopDialogRef.current = () => {
+    if (showDuplicateModal) { setShowDuplicateModal(false); return; }
+    if (showDeleteConfirm) { setShowDeleteConfirm(false); return; }
+    if (showDiscardConfirm) { setShowDiscardConfirm(false); return; }
+    handleBack();
+  };
+
+  useEffect(() => {
+    let unmounted = false;
+    const stack = getBackStack();
+    const pushMine = () => {
+      stack.push(handler);
+      window.history.pushState({ ddBack: true }, '');
+    };
+    const handler = () => {
+      closeTopDialogRef.current();
+      if (!unmounted) pushMine();
+    };
+    pushMine();
+    return () => {
+      unmounted = true;
+      if (stack[stack.length - 1] === handler) {
+        stack.pop();
+        (window as any).__ddSyntheticBack = true;
+        window.history.back();
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Date Shift Helpers (Prev / Next Day)
   const handleShiftDay = (delta: number) => {

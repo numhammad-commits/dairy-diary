@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   ArrowLeft, 
   FileText, 
@@ -38,6 +38,16 @@ import { BulkEntryModal } from './BulkEntryModal';
 import { CustomerPaymentHistoryModal } from './CustomerPaymentHistoryModal';
 import { CustomerReceivePaymentModal } from './CustomerReceivePaymentModal';
 import { CustomerShareReceiptModal } from './CustomerShareReceiptModal';
+
+// Shared hardware-back-button stack (same helper duplicated in App.tsx and
+// EditEntryScreen.tsx). `editingEntry` deliberately does NOT push here —
+// EditEntryScreen.tsx owns its own push/pop on mount/unmount instead, so it
+// can respect its unsaved-changes "Discard changes?" prompt on back too.
+function getBackStack(): Array<() => void> {
+  const w = window as any;
+  if (!w.__ddBackStack) w.__ddBackStack = [];
+  return w.__ddBackStack;
+}
 
 interface ContactDetailModalProps {
   contact: Contact;
@@ -119,6 +129,63 @@ export const ContactDetailModal: React.FC<ContactDetailModalProps> = ({
   const [showReportPeriodSheet, setShowReportPeriodSheet] = useState<boolean>(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<boolean>(false);
   const [showToast, setShowToast] = useState<string | null>(null);
+
+  // Hardware back button: closes the topmost internal modal, most-nested
+  // first. Mirrors the combined-watcher pattern in App.tsx one level deeper.
+  const closeTopInternalOverlay = () => {
+    if (showDeleteConfirm) { setShowDeleteConfirm(false); return; }
+    if (isEditingCustomer) { setIsEditingCustomer(false); return; }
+    if (showReportPeriodSheet) { setShowReportPeriodSheet(false); return; }
+    if (showBulkModal) { setShowBulkModal(false); return; }
+    if (showPaymentHistory) { setShowPaymentHistory(false); return; }
+    if (showReceiveModal) { setShowReceiveModal(false); return; }
+    if (showRateEditModal) { setShowRateEditModal(false); return; }
+    if (showAddEntryModal) { setShowAddEntryModal(false); return; }
+    if (showShareModal) { setShowShareModal(false); return; }
+  };
+
+  const isAnyInternalOverlayOpen =
+    showDeleteConfirm || isEditingCustomer || showReportPeriodSheet || showBulkModal ||
+    showPaymentHistory || showReceiveModal || showRateEditModal || showAddEntryModal || showShareModal;
+
+  const closeTopInternalOverlayRef = useRef(closeTopInternalOverlay);
+  closeTopInternalOverlayRef.current = closeTopInternalOverlay;
+  const stableBackHandlerRef = useRef(() => closeTopInternalOverlayRef.current());
+  const wasInternalOverlayOpenRef = useRef(false);
+  const isFirstInternalCheckRef = useRef(true);
+
+  const popOwnBackEntry = () => {
+    const stack = getBackStack();
+    if (stack[stack.length - 1] === stableBackHandlerRef.current) {
+      stack.pop();
+      (window as any).__ddSyntheticBack = true;
+      window.history.back();
+    }
+  };
+
+  useEffect(() => {
+    if (isFirstInternalCheckRef.current) {
+      isFirstInternalCheckRef.current = false;
+      wasInternalOverlayOpenRef.current = isAnyInternalOverlayOpen;
+      return;
+    }
+    if (isAnyInternalOverlayOpen && !wasInternalOverlayOpenRef.current) {
+      getBackStack().push(stableBackHandlerRef.current);
+      window.history.pushState({ ddBack: true }, '');
+    } else if (!isAnyInternalOverlayOpen && wasInternalOverlayOpenRef.current) {
+      popOwnBackEntry();
+    }
+    wasInternalOverlayOpenRef.current = isAnyInternalOverlayOpen;
+  }, [isAnyInternalOverlayOpen]);
+
+  // Safety net: if this whole modal is unmounted abruptly (e.g. the parent
+  // clears `selectedContact` as part of deleting this very customer) while
+  // an internal overlay's entry is still on the stack, consume it here so a
+  // later back-press doesn't land on a dead history slot.
+  useEffect(() => {
+    return () => popOwnBackEntry();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Single source of truth for this customer's payments from global paymentRecords
   const customerPayments = useMemo(() => {
