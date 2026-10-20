@@ -217,10 +217,10 @@ export const ContactLedgerList: React.FC<ContactLedgerListProps> = ({
 
               {/* Name & Timestamp */}
               <div className="min-w-0 flex-1 pr-1">
-                <h4 className="text-sm font-bold text-[#163B32] tracking-tight leading-snug group-hover:text-[#0B8F68]">
+                <h4 className="text-base font-bold text-[#163B32] tracking-tight leading-snug group-hover:text-[#0B8F68]">
                   {contact.name}
                 </h4>
-                <p className="text-xs text-[#55756D] font-medium mt-0.5 truncate flex items-center gap-1">
+                <p className="text-sm text-[#55756D] font-medium mt-0.5 truncate flex items-center gap-1">
                   <span>{getContactActivityLabel(contact)}</span>
                 </p>
               </div>
@@ -236,7 +236,7 @@ export const ContactLedgerList: React.FC<ContactLedgerListProps> = ({
                 return (
                   <div className="text-right">
                     <span
-                      className={`text-xs sm:text-sm font-black tracking-tight block ${
+                      className={`text-sm sm:text-base font-black tracking-tight block ${
                         currentDue > 0 ? 'text-[#E5485D]' : 'text-[#55756D]'
                       }`}
                     >

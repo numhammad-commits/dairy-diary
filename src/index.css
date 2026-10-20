@@ -1,5 +1,20 @@
 @import "tailwindcss";
 
+/* Global typography — apply the Plus Jakarta Sans font already loaded in index.html
+   (it was being fetched but never actually used anywhere) and lift the default body
+   weight/heading weight. Element selectors here are lower-specificity than any
+   Tailwind font-weight utility class (font-bold, font-black, etc.), so every element
+   that already sets an explicit weight is unaffected — this only raises the baseline
+   for text that currently has none. */
+body {
+  font-family: 'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  font-weight: 500;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-weight: 700;
+}
+
 /* Clean Light Theme with Dark Forest Green Header */
 .bg-glass-gradient {
   background-color: #F4FBF7;

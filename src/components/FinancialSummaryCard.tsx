@@ -46,10 +46,10 @@ export const FinancialSummaryCard: React.FC<FinancialSummaryCardProps> = ({
             <Droplets className="w-5 h-5 fill-white text-white" />
           </div>
           <div className="min-w-0">
-            <span className="block text-[11px] font-semibold text-[#55756D] leading-tight mb-0.5">
+            <span className="block text-xs font-semibold text-[#55756D] leading-tight mb-0.5">
               Milk
             </span>
-            <span className="text-base sm:text-lg font-black text-[#163B32] tracking-tight leading-tight truncate block">
+            <span className="text-lg sm:text-xl font-black text-[#163B32] tracking-tight leading-tight truncate block">
               {formatLiters(liters)}
             </span>
           </div>
@@ -61,10 +61,10 @@ export const FinancialSummaryCard: React.FC<FinancialSummaryCardProps> = ({
             <Banknote className="w-5 h-5 text-white stroke-[2.2]" />
           </div>
           <div className="min-w-0">
-            <span className="block text-[11px] font-semibold text-[#55756D] leading-tight mb-0.5">
+            <span className="block text-xs font-semibold text-[#55756D] leading-tight mb-0.5">
               Amount
             </span>
-            <span className="text-base sm:text-lg font-black text-[#163B32] tracking-tight leading-tight truncate block">
+            <span className="text-lg sm:text-xl font-black text-[#163B32] tracking-tight leading-tight truncate block">
               {formatPKR(amount)}
             </span>
           </div>
@@ -76,10 +76,10 @@ export const FinancialSummaryCard: React.FC<FinancialSummaryCardProps> = ({
             <AlertCircle className="w-5 h-5 text-white stroke-[2.2]" />
           </div>
           <div className="min-w-0">
-            <span className="block text-[11px] font-semibold text-[#55756D] leading-tight mb-0.5">
+            <span className="block text-xs font-semibold text-[#55756D] leading-tight mb-0.5">
               Due
             </span>
-            <span className="text-base sm:text-lg font-black text-[#E5485D] tracking-tight leading-tight truncate block">
+            <span className="text-lg sm:text-xl font-black text-[#E5485D] tracking-tight leading-tight truncate block">
               {formatPKR(due)}
             </span>
           </div>
@@ -91,10 +91,10 @@ export const FinancialSummaryCard: React.FC<FinancialSummaryCardProps> = ({
             <CheckCircle2 className="w-5 h-5 text-white stroke-[2.5]" />
           </div>
           <div className="min-w-0">
-            <span className="block text-[11px] font-semibold text-[#55756D] leading-tight mb-0.5">
+            <span className="block text-xs font-semibold text-[#55756D] leading-tight mb-0.5">
               Received
             </span>
-            <span className="text-base sm:text-lg font-black text-[#0B9B72] tracking-tight leading-tight truncate block">
+            <span className="text-lg sm:text-xl font-black text-[#0B9B72] tracking-tight leading-tight truncate block">
               {formatPKR(received)}
             </span>
           </div>
@@ -108,7 +108,7 @@ export const FinancialSummaryCard: React.FC<FinancialSummaryCardProps> = ({
         title="Click to view lifetime debt aging & details"
       >
         <span className="text-xs font-semibold text-[#163B32]">Total Outstanding:</span>
-        <span className="text-xs sm:text-sm font-black text-[#163B32] tracking-tight">
+        <span className="text-sm sm:text-base font-black text-[#163B32] tracking-tight">
           {formatPKR(totalOutstanding)}
         </span>
         <Info className="w-4 h-4 text-[#0B8F68] ml-0.5" />
@@ -117,8 +117,8 @@ export const FinancialSummaryCard: React.FC<FinancialSummaryCardProps> = ({
       {/* Previous Balance Carried Forward (shown separately, not mixed into Outstanding) */}
       {(previousBalance ?? 0) > 0 && (
         <div className="w-full flex items-center justify-between py-1.5 px-3.5 rounded-xl bg-[#FFF9E6] border border-[#FFE8A3] text-[#7A5800] text-xs shadow-xs">
-          <span className="font-semibold text-[11px] sm:text-xs">Previous Balance Carried Forward:</span>
-          <span className="font-black text-xs sm:text-sm text-[#946200]">{formatPKR(previousBalance!)}</span>
+          <span className="font-semibold text-xs sm:text-sm">Previous Balance Carried Forward:</span>
+          <span className="font-black text-sm sm:text-base text-[#946200]">{formatPKR(previousBalance!)}</span>
         </div>
       )}
     </div>
