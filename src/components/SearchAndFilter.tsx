@@ -53,7 +53,7 @@ export const SearchAndFilter: React.FC<SearchAndFilterProps> = ({
     if (addressFilter && addressFilter !== 'all') {
       const areaTag =
         addressFilter === 'no_address'
-          ? 'No Addr'
+          ? 'No Area'
           : (addressFilter.length > 10 ? `${addressFilter.slice(0, 9)}…` : addressFilter);
       return `${areaTag} · ${label}`;
     }
@@ -276,7 +276,7 @@ export const SearchAndFilter: React.FC<SearchAndFilterProps> = ({
               <div className="px-2 pt-1 pb-1">
                 <div className="flex items-center justify-between px-2.5 py-1">
                   <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">
-                    Address Order
+                    Filter by Area
                   </span>
                   {addressFilter !== 'all' && (
                     <button
@@ -367,7 +367,7 @@ export const SearchAndFilter: React.FC<SearchAndFilterProps> = ({
                             addressFilter === 'no_address' ? 'bg-amber-600' : 'bg-slate-300'
                           }`}
                         />
-                        <span className="truncate text-left italic">No Address</span>
+                        <span className="truncate text-left italic">No Area</span>
                       </div>
                       {addressFilter === 'no_address' && (
                         <Check className="w-3.5 h-3.5 text-amber-900 stroke-[2.5] shrink-0" />

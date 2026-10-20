@@ -162,18 +162,18 @@ export default function App() {
   // Dynamic set of unique customer addresses/areas for Address Order filter
   const availableAddresses = useMemo(() => {
     const unique = new Set<string>();
-    let hasNoAddress = false;
+    let hasNoArea = false;
     contacts.forEach((c) => {
-      const addr = c.address?.trim();
-      if (addr) {
-        unique.add(addr);
+      const area = c.area?.trim();
+      if (area) {
+        unique.add(area);
       } else {
-        hasNoAddress = true;
+        hasNoArea = true;
       }
     });
     return {
       addresses: Array.from(unique).sort((a, b) => a.localeCompare(b)),
-      hasNoAddress,
+      hasNoAddress: hasNoArea,
     };
   }, [contacts]);
 
@@ -260,9 +260,9 @@ export default function App() {
         // Address Order / Area filter: all | no_address | specific address
         if (addressFilter !== 'all') {
           if (addressFilter === 'no_address') {
-            if (contact.address && contact.address.trim()) return false;
+            if (contact.area && contact.area.trim()) return false;
           } else {
-            if (!contact.address || contact.address.trim() !== addressFilter) return false;
+            if (!contact.area || contact.area.trim() !== addressFilter) return false;
           }
         }
 
@@ -300,9 +300,9 @@ export default function App() {
       if (statusFilter === 'inactive' && c.status !== 'inactive') return false;
       if (addressFilter !== 'all') {
         if (addressFilter === 'no_address') {
-          if (c.address && c.address.trim()) return false;
+          if (c.area && c.area.trim()) return false;
         } else {
-          if (!c.address || c.address.trim() !== addressFilter) return false;
+          if (!c.area || c.area.trim() !== addressFilter) return false;
         }
       }
       return true;
