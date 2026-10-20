@@ -220,8 +220,8 @@ export const ContactLedgerList: React.FC<ContactLedgerListProps> = ({
                 <h4 className="text-base font-bold text-[#163B32] tracking-tight leading-snug break-words line-clamp-2 group-hover:text-[#0B8F68]">
                   {contact.name}
                 </h4>
-                <p className="text-sm text-[#55756D] font-medium mt-0.5 truncate flex items-center gap-1">
-                  <span>{getContactActivityLabel(contact)}</span>
+                <p className="text-[11px] text-[#55756D] font-medium mt-0.5 whitespace-nowrap">
+                  {getContactActivityLabel(contact)}
                 </p>
               </div>
             </div>
