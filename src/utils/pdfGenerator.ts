@@ -598,6 +598,350 @@ export async function generateSawaaPdfDocument(
 }
 
 // =========================================================================
+// RECEIPT TEMPLATES — Thermal (58mm, black & white) and Ledger (dense table)
+// are fully independent generators, additive alongside generateSawaaPdfDocument
+// above (the "Modern" default), which they never call into or modify. A thin
+// dispatcher (generateReceiptPdf) picks the right one based on the business's
+// selected template.
+// =========================================================================
+
+export type ReceiptPdfTemplate = 'modern' | 'thermal' | 'ledger';
+
+// Shared by SettingsView (live preview) and CustomerShareReceiptModal (Share/PDF)
+// so the label stored in businessSettings.receiptTemplate maps to one consistent
+// variant everywhere.
+export function receiptTemplateFromLabel(label?: string): ReceiptPdfTemplate {
+  const lower = (label || '').toLowerCase();
+  if (lower.includes('thermal')) return 'thermal';
+  if (lower.includes('ledger')) return 'ledger';
+  return 'modern';
+}
+
+interface ReceiptFinancials {
+  totalMilk: number;
+  totalAmount: number;
+  totalReceived: number;
+  periodDue: number;
+  previousDue: number;
+  totalOutstanding: number;
+}
+
+// Narrow (58mm) black-and-white receipt styled like a real thermal printer slip:
+// Courier font, dashed-line dividers, aggregate totals only (no per-entry table —
+// real thermal receipts stay short). The page height is computed from a fixed,
+// deterministic line count so there's no blank tail and nothing can overflow.
+export async function generateThermalReceiptPdf(
+  contact: Contact,
+  entries: LedgerEntry[],
+  periodTitle: string,
+  businessSettings?: BusinessSettings,
+  financials?: ReceiptFinancials
+): Promise<GeneratedPdfResult> {
+  const companyName = businessSettings?.businessName?.trim() || 'Dairy Farm';
+  const companyPhone = businessSettings?.phone?.trim() || '';
+  const currSym = businessSettings?.currencySymbol?.trim() || 'Rs';
+
+  const totalMilk = financials?.totalMilk ?? entries.reduce((s, e) => s + e.liters, 0);
+  const totalAmount = financials?.totalAmount ?? entries.reduce((s, e) => s + e.totalAmount, 0);
+  const totalReceived = financials?.totalReceived ?? entries.reduce((s, e) => s + e.receivedAmount, 0);
+  const periodDue = financials?.periodDue ?? (totalAmount - totalReceived);
+  const previousDue = financials?.previousDue ?? 0;
+  const totalOutstanding = financials?.totalOutstanding ?? (periodDue + previousDue);
+  const avgRate = totalMilk > 0 ? totalAmount / totalMilk : 0;
+
+  const now = new Date();
+  const billDateStr = now.toLocaleDateString('en-US', { day: '2-digit', month: 'short', year: 'numeric' });
+  const dueDate = new Date();
+  dueDate.setDate(dueDate.getDate() + 7);
+  const dueDateStr = dueDate.toLocaleDateString('en-US', { day: '2-digit', month: 'short', year: 'numeric' });
+
+  const pageWidth = 58;
+  const margin = 3;
+  const lineGap = 4.6;
+  const topMargin = 6;
+  const bottomMargin = 6;
+
+  const lineCount =
+    1 + // company name
+    (companyPhone ? 1 : 0) +
+    1 + // divider
+    1 + 1 + 1 + 1 + // Billed To label / customer name / period / date
+    1 + // divider
+    1 + 1 + // milk / rate
+    1 + // divider
+    1 + 1 + (previousDue > 0 ? 1 : 0) + // total amt / received / prev due
+    1 + // divider
+    1 + 1 + // BALANCE DUE label + amount
+    1 + // divider
+    1 + // due by
+    1 + 1; // thank you / dairy diary
+
+  const pageHeight = topMargin + lineCount * lineGap + bottomMargin;
+
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: [pageWidth, pageHeight] });
+  const center = pageWidth / 2;
+  let y = topMargin;
+  const divider = '-'.repeat(30);
+
+  doc.setTextColor(0, 0, 0);
+
+  const centerText = (text: string, bold = false, size = 9) => {
+    doc.setFont('courier', bold ? 'bold' : 'normal');
+    doc.setFontSize(size);
+    doc.text(text, center, y, { align: 'center' });
+    y += lineGap;
+  };
+  const row = (label: string, value: string, bold = false, size = 8) => {
+    doc.setFont('courier', bold ? 'bold' : 'normal');
+    doc.setFontSize(size);
+    doc.text(label, margin, y);
+    doc.text(value, pageWidth - margin, y, { align: 'right' });
+    y += lineGap;
+  };
+  const dividerLine = () => {
+    doc.setFont('courier', 'normal');
+    doc.setFontSize(7.5);
+    doc.text(divider, center, y, { align: 'center' });
+    y += lineGap;
+  };
+
+  centerText(companyName.toUpperCase(), true, 10);
+  if (companyPhone) centerText(companyPhone, false, 8);
+  dividerLine();
+
+  doc.setFont('courier', 'normal');
+  doc.setFontSize(8);
+  doc.text('Billed To:', margin, y);
+  y += lineGap;
+  doc.setFont('courier', 'bold');
+  doc.setFontSize(8.5);
+  doc.text(contact.name, margin, y);
+  y += lineGap;
+  row('Period:', periodTitle);
+  row('Date:', billDateStr);
+  dividerLine();
+
+  row('Milk', `${totalMilk.toFixed(2)} L`);
+  row('Rate', `${currSym}${avgRate.toFixed(1)}/L`);
+  dividerLine();
+
+  row('Total Amt', `${currSym}${Math.round(totalAmount).toLocaleString()}`, true);
+  row('Received', `${currSym}${Math.round(totalReceived).toLocaleString()}`);
+  if (previousDue > 0) {
+    row('Prev. Due', `${currSym}${Math.round(previousDue).toLocaleString()}`);
+  }
+  dividerLine();
+
+  centerText('BALANCE DUE', true, 8);
+  centerText(`${currSym}${Math.round(totalOutstanding).toLocaleString()}`, true, 13);
+  dividerLine();
+
+  row('Due By:', dueDateStr);
+  centerText('Thank you!', true, 8.5);
+  centerText('Dairy Diary', false, 7);
+
+  const pdfBlob = doc.output('blob');
+  const filename = `Dairy_Diary_Receipt_${contact.name.replace(/[^a-zA-Z0-9]/g, '_')}_${periodTitle.replace(/[^a-zA-Z0-9]/g, '_')}.pdf`;
+  const pdfUrl = URL.createObjectURL(pdfBlob);
+  const pdfFile = new File([pdfBlob], filename, { type: 'application/pdf' });
+
+  return { blob: pdfBlob, url: pdfUrl, filename, file: pdfFile, billDateStr, dueDateStr, isPremium: false };
+}
+
+// Dense A4 table reusing the same column layout/pagination approach already proven in
+// generateSawaaPdfDocument's transaction ledger, but as a standalone compact document:
+// a short header, straight into the table, a totals bar — no QR/signatures/payment
+// accounts section, so more real data fits per page.
+export async function generateLedgerSheetPdf(
+  contact: Contact,
+  entries: LedgerEntry[],
+  periodTitle: string,
+  businessSettings?: BusinessSettings,
+  financials?: ReceiptFinancials
+): Promise<GeneratedPdfResult> {
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const pageWidth = 210;
+  const pageHeight = 297;
+  const margin = 14;
+  const contentWidth = pageWidth - margin * 2;
+
+  const companyName = businessSettings?.businessName?.trim() || 'Dairy Farm';
+  const currSym = businessSettings?.currencySymbol?.trim() || 'Rs';
+
+  const totalMilk = financials?.totalMilk ?? entries.reduce((s, e) => s + e.liters, 0);
+  const totalAmount = financials?.totalAmount ?? entries.reduce((s, e) => s + e.totalAmount, 0);
+  const totalReceived = financials?.totalReceived ?? entries.reduce((s, e) => s + e.receivedAmount, 0);
+  const periodDue = financials?.periodDue ?? (totalAmount - totalReceived);
+  const previousDue = financials?.previousDue ?? 0;
+  const totalOutstanding = financials?.totalOutstanding ?? (periodDue + previousDue);
+
+  const now = new Date();
+  const billDateStr = now.toLocaleDateString('en-US', { day: '2-digit', month: 'short', year: 'numeric' });
+  const dueDate = new Date();
+  dueDate.setDate(dueDate.getDate() + 7);
+  const dueDateStr = dueDate.toLocaleDateString('en-US', { day: '2-digit', month: 'short', year: 'numeric' });
+
+  const GREEN: [number, number, number] = [30, 86, 49];
+  const RED: [number, number, number] = [185, 28, 28];
+
+  let yPos = 12;
+
+  doc.setFillColor(...GREEN);
+  doc.rect(margin, yPos, contentWidth, 16, 'F');
+  doc.setTextColor(255, 255, 255);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(12);
+  doc.text(`${companyName.toUpperCase()} - LEDGER STATEMENT`, margin + 3, yPos + 9);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8.5);
+  doc.text(`${contact.name}  |  ${periodTitle}  |  Generated ${billDateStr}`, margin + 3, yPos + 14.5);
+
+  yPos += 24;
+
+  const ledgerCols = [
+    { title: 'Date', width: 22 },
+    { title: 'Time', width: 20 },
+    { title: 'Shift', width: 16 },
+    { title: 'Type', width: 20 },
+    { title: 'Qty', width: 22 },
+    { title: 'Rate', width: 24 },
+    { title: 'Total', width: 26 },
+    { title: 'Due', width: 26 },
+  ];
+  const tableRowH = 6;
+
+  const drawTableHeader = () => {
+    doc.setFillColor(...GREEN);
+    doc.rect(margin, yPos, contentWidth, tableRowH, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7.5);
+    let x = margin + 2;
+    ledgerCols.forEach((c) => {
+      doc.text(c.title, x, yPos + 4.2);
+      x += c.width;
+    });
+    yPos += tableRowH;
+  };
+
+  drawTableHeader();
+
+  const sorted = [...entries].sort((a, b) => a.date.localeCompare(b.date) || a.timestamp.localeCompare(b.timestamp));
+
+  if (sorted.length === 0) {
+    doc.setTextColor(100, 116, 139);
+    doc.setFont('helvetica', 'italic');
+    doc.setFontSize(8);
+    doc.text('No transactions recorded for this period.', margin + 3, yPos + 4.5);
+    yPos += tableRowH;
+  } else {
+    sorted.forEach((e, idx) => {
+      if (yPos + tableRowH > pageHeight - 20) {
+        doc.addPage();
+        yPos = 16;
+        drawTableHeader();
+      }
+      const isEven = idx % 2 === 0;
+      doc.setFillColor(isEven ? 255 : 245, isEven ? 255 : 250, isEven ? 255 : 247);
+      doc.rect(margin, yPos, contentWidth, tableRowH, 'F');
+      doc.setDrawColor(230, 238, 233);
+      doc.line(margin, yPos + tableRowH, margin + contentWidth, yPos + tableRowH);
+
+      doc.setTextColor(30, 41, 59);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(7.2);
+      let x = margin + 2;
+      doc.text(e.date, x, yPos + 4.2);
+      x += ledgerCols[0].width;
+      doc.text(e.timestamp || '-', x, yPos + 4.2);
+      x += ledgerCols[1].width;
+      doc.text(e.shift.toUpperCase(), x, yPos + 4.2);
+      x += ledgerCols[2].width;
+      doc.text((e.milkType || 'other').toUpperCase(), x, yPos + 4.2);
+      x += ledgerCols[3].width;
+      doc.text(`${e.liters.toFixed(2)} L`, x, yPos + 4.2);
+      x += ledgerCols[4].width;
+      doc.text(`${currSym}${e.ratePerLiter.toFixed(1)}`, x, yPos + 4.2);
+      x += ledgerCols[5].width;
+      doc.setFont('helvetica', 'bold');
+      doc.text(`${currSym}${Math.round(e.totalAmount).toLocaleString()}`, x, yPos + 4.2);
+      x += ledgerCols[6].width;
+      doc.setTextColor(...RED);
+      doc.text(`${currSym}${Math.round(e.dueAmount).toLocaleString()}`, x, yPos + 4.2);
+
+      yPos += tableRowH;
+    });
+  }
+
+  if (yPos + 10 > pageHeight - 20) {
+    doc.addPage();
+    yPos = 16;
+  }
+  doc.setFillColor(236, 253, 245);
+  doc.setDrawColor(167, 243, 208);
+  doc.rect(margin, yPos, contentWidth, 8, 'FD');
+  doc.setTextColor(21, 128, 61);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8);
+  doc.text('TOTAL', margin + 2, yPos + 5.3);
+  doc.text(`${totalMilk.toFixed(2)} L`, margin + ledgerCols.slice(0, 4).reduce((s, c) => s + c.width, 0) + 2, yPos + 5.3);
+  doc.text(
+    `${currSym}${Math.round(totalAmount).toLocaleString()}`,
+    margin + ledgerCols.slice(0, 6).reduce((s, c) => s + c.width, 0) + 2,
+    yPos + 5.3
+  );
+  doc.setTextColor(...RED);
+  doc.text(
+    `${currSym}${Math.round(periodDue).toLocaleString()}`,
+    margin + ledgerCols.slice(0, 7).reduce((s, c) => s + c.width, 0) + 2,
+    yPos + 5.3
+  );
+  yPos += 14;
+
+  doc.setTextColor(30, 41, 59);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  doc.text(`Received: ${currSym}${Math.round(totalReceived).toLocaleString()}`, margin, yPos);
+  doc.text(`Prev. Due: ${currSym}${Math.round(previousDue).toLocaleString()}`, margin + 70, yPos);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(...(totalOutstanding > 0 ? RED : GREEN));
+  doc.text(`Outstanding: ${currSym}${Math.round(totalOutstanding).toLocaleString()}`, margin + 140, yPos);
+  yPos += 8;
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8);
+  doc.setTextColor(100, 116, 139);
+  doc.text(`Payment due by ${dueDateStr}`, margin, yPos);
+
+  const pdfBlob = doc.output('blob');
+  const filename = `Dairy_Diary_Ledger_${contact.name.replace(/[^a-zA-Z0-9]/g, '_')}_${periodTitle.replace(/[^a-zA-Z0-9]/g, '_')}.pdf`;
+  const pdfUrl = URL.createObjectURL(pdfBlob);
+  const pdfFile = new File([pdfBlob], filename, { type: 'application/pdf' });
+
+  return { blob: pdfBlob, url: pdfUrl, filename, file: pdfFile, billDateStr, dueDateStr, isPremium: false };
+}
+
+// Dispatcher — the only receipt-generating function other files should call. Picks
+// the right generator based on the business's selected template, defaulting to the
+// existing Modern statement (generateSawaaPdfDocument, untouched by this feature).
+export async function generateReceiptPdf(
+  contact: Contact,
+  entries: LedgerEntry[],
+  periodTitle: string,
+  businessSettings?: BusinessSettings,
+  financials?: ReceiptFinancials,
+  isPremium: boolean = false,
+  template: ReceiptPdfTemplate = 'modern'
+): Promise<GeneratedPdfResult> {
+  if (template === 'thermal') {
+    return generateThermalReceiptPdf(contact, entries, periodTitle, businessSettings, financials);
+  }
+  if (template === 'ledger') {
+    return generateLedgerSheetPdf(contact, entries, periodTitle, businessSettings, financials);
+  }
+  return generateSawaaPdfDocument(contact, entries, periodTitle, businessSettings, financials, isPremium);
+}
+
+// =========================================================================
 // REPORTS PAGE PDF — a period-wide summary across all customers, distinct from
 // generateSawaaPdfDocument above (which is always scoped to one customer's bill).
 // =========================================================================

@@ -27,13 +27,26 @@ import {
   Fuel,
   Pencil
 } from 'lucide-react';
-import { BusinessSettings } from '../types/dairy';
+import { BusinessSettings, LedgerEntry } from '../types/dairy';
 import { SawaaLogo } from './SawaaLogo';
-import { 
-  REGIONAL_CONFIGS, 
-  getActiveRegionConfig, 
-  RegionConfig 
+import { ReceiptTemplate } from './ReceiptTemplate';
+import { receiptTemplateFromLabel } from '../utils/pdfGenerator';
+import {
+  REGIONAL_CONFIGS,
+  getActiveRegionConfig,
+  RegionConfig
 } from '../utils/regionalPaymentConfig';
+
+// Representative sample data for the live receipt template preview in the Settings
+// modal — this screen has no real customer/entries context to render against.
+const PREVIEW_SAMPLE_ENTRIES: LedgerEntry[] = [
+  { id: 'preview-1', contactId: 'preview', contactName: 'John Doe', contactRole: 'buyer', date: '2026-10-18', timestamp: '07:05 AM', shift: 'morning', milkType: 'buffalo', liters: 2, ratePerLiter: 240, totalAmount: 480, receivedAmount: 480, dueAmount: 0, paymentMode: 'cash' },
+  { id: 'preview-2', contactId: 'preview', contactName: 'John Doe', contactRole: 'buyer', date: '2026-10-19', timestamp: '06:50 PM', shift: 'evening', milkType: 'buffalo', liters: 1.5, ratePerLiter: 240, totalAmount: 360, receivedAmount: 0, dueAmount: 360, paymentMode: 'credit' },
+  { id: 'preview-3', contactId: 'preview', contactName: 'John Doe', contactRole: 'buyer', date: '2026-10-20', timestamp: '07:10 AM', shift: 'morning', milkType: 'buffalo', liters: 2, ratePerLiter: 240, totalAmount: 480, receivedAmount: 0, dueAmount: 480, paymentMode: 'credit' },
+];
+const PREVIEW_TOTAL_MILK = PREVIEW_SAMPLE_ENTRIES.reduce((s, e) => s + e.liters, 0);
+const PREVIEW_TOTAL_AMOUNT = PREVIEW_SAMPLE_ENTRIES.reduce((s, e) => s + e.totalAmount, 0);
+const PREVIEW_TOTAL_RECEIVED = PREVIEW_SAMPLE_ENTRIES.reduce((s, e) => s + e.receivedAmount, 0);
 
 interface SettingsViewProps {
   settings: BusinessSettings;
@@ -58,6 +71,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [expandedPaymentMethod, setExpandedPaymentMethod] = useState<string | null>(null);
   const [showCurrencyModal, setShowCurrencyModal] = useState(false);
   const [showTemplateModal, setShowTemplateModal] = useState(false);
+  // Uncommitted selection shown in the live preview while the template modal is open —
+  // only written into `form` (and thus saved) when "Use This Template" is tapped.
+  const [previewTemplate, setPreviewTemplate] = useState(settings.receiptTemplate);
   const [pendingRegion, setPendingRegion] = useState<RegionConfig | null>(null);
   const [currencySearchQuery, setCurrencySearchQuery] = useState('');
 
@@ -719,7 +735,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             {/* Receipt Template Selector */}
             <button
               type="button"
-              onClick={() => setShowTemplateModal(true)}
+              onClick={() => {
+                setPreviewTemplate(form.receiptTemplate);
+                setShowTemplateModal(true);
+              }}
               className="w-full p-3.5 flex items-center justify-between hover:bg-slate-50 transition-colors text-left cursor-pointer"
             >
               <div className="flex items-center gap-3">
@@ -1028,32 +1047,82 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         </div>
       )}
 
-      {/* Receipt Template Selector Modal */}
+      {/* Receipt Template Selector Modal, with a live preview of the tapped option */}
       {showTemplateModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
-          <div className="bg-white rounded-2xl w-full max-w-xs overflow-hidden shadow-2xl border border-slate-200">
-            <div className="bg-[#1E5631] text-white p-3 font-bold text-sm flex justify-between items-center">
+          <div className="bg-white rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl border border-slate-200 max-h-[90vh] flex flex-col">
+            <div className="bg-[#1E5631] text-white p-3 font-bold text-sm flex justify-between items-center shrink-0">
               <span>Select Receipt Template</span>
-              <button onClick={() => setShowTemplateModal(false)}>✕</button>
+              <button onClick={() => setShowTemplateModal(false)} className="cursor-pointer">✕</button>
             </div>
-            <div className="p-3 space-y-1.5 text-xs">
-              {['Modern (Default)', 'Classic Thermal (58mm)', 'Compact Ledger Sheet'].map((tpl) => (
-                <button
-                  key={tpl}
-                  onClick={() => {
-                    setForm({ ...form, receiptTemplate: tpl });
-                    setShowTemplateModal(false);
-                  }}
-                  className={`w-full p-2.5 text-left font-semibold flex justify-between items-center rounded-lg transition-colors ${
-                    form.receiptTemplate === tpl
-                      ? 'bg-[#EAF2EC] text-[#1E5631] font-bold'
-                      : 'text-slate-700 hover:bg-slate-50'
-                  }`}
-                >
-                  <span>{tpl}</span>
-                  {form.receiptTemplate === tpl && <Check className="w-4 h-4" />}
-                </button>
-              ))}
+
+            <div className="overflow-y-auto">
+              <div className="p-3 space-y-1.5 text-xs">
+                {['Modern (Default)', 'Classic Thermal (58mm)', 'Compact Ledger Sheet'].map((tpl) => (
+                  <button
+                    key={tpl}
+                    type="button"
+                    onClick={() => setPreviewTemplate(tpl)}
+                    className={`w-full p-2.5 text-left font-semibold flex justify-between items-center rounded-lg transition-colors cursor-pointer ${
+                      previewTemplate === tpl
+                        ? 'bg-[#EAF2EC] text-[#1E5631] font-bold'
+                        : 'text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    <span>{tpl}</span>
+                    {previewTemplate === tpl && <Check className="w-4 h-4" />}
+                  </button>
+                ))}
+              </div>
+
+              {/* Live Preview: a scaled-down render of the actual receipt component,
+                  using representative sample data since this screen has no real
+                  customer/entries context. */}
+              <div className="px-3 pb-3">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-[#55756D] mb-1.5">
+                  Live Preview
+                </p>
+                <div className="bg-slate-100 rounded-xl border border-slate-200 p-2 flex justify-center overflow-hidden max-h-80 overflow-y-auto">
+                  {/* `zoom` (not `transform: scale`) actually shrinks the box's layout
+                      size, so the preview's real height collapses along with it instead
+                      of leaving a scaled element's original full-height blank gap. */}
+                  <div style={{ zoom: 0.55 } as React.CSSProperties}>
+                      <ReceiptTemplate
+                        variant={receiptTemplateFromLabel(previewTemplate)}
+                        entries={receiptTemplateFromLabel(previewTemplate) === 'ledger' ? PREVIEW_SAMPLE_ENTRIES : undefined}
+                        businessName={form.businessName || 'SAWAA'}
+                        businessPhone={form.phone}
+                        businessLocation={form.location}
+                        logoUrl={form.logoUrl}
+                        customerName="John Doe"
+                        customerAddress="Sample Street, Model Town"
+                        periodTitle="October 2026"
+                        totalMilk={PREVIEW_TOTAL_MILK}
+                        avgRate={PREVIEW_TOTAL_MILK > 0 ? PREVIEW_TOTAL_AMOUNT / PREVIEW_TOTAL_MILK : 0}
+                        daysTaken={PREVIEW_SAMPLE_ENTRIES.length}
+                        missedDaysLabel="None"
+                        totalAmount={PREVIEW_TOTAL_AMOUNT}
+                        totalReceived={PREVIEW_TOTAL_RECEIVED}
+                        totalOutstanding={PREVIEW_TOTAL_AMOUNT - PREVIEW_TOTAL_RECEIVED}
+                        currencySymbol={form.currencySymbol}
+                      />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-3 border-t border-slate-200 shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  setForm({ ...form, receiptTemplate: previewTemplate });
+                  setShowTemplateModal(false);
+                }}
+                className="w-full py-2.5 bg-[#0B8F68] hover:bg-[#097A59] text-white text-xs font-extrabold rounded-xl transition-colors cursor-pointer flex items-center justify-center gap-1.5"
+              >
+                <Check className="w-3.5 h-3.5" />
+                Use This Template
+              </button>
             </div>
           </div>
         </div>

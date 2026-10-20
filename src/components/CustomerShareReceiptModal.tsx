@@ -2,7 +2,7 @@ import React, { useState, useMemo, useRef } from 'react';
 import { ArrowLeft, X, Share2, Download, Eye, Check, FileText, Calendar, Clock, DollarSign, Smartphone, Loader2 } from 'lucide-react';
 import { Contact, LedgerEntry, PaymentRecord, BusinessSettings } from '../types/dairy';
 import { formatPKR, formatLiters, getDeviceTodayDate, formatDairyReceiptText } from '../utils/formatters';
-import { generateSawaaPdfDocument } from '../utils/pdfGenerator';
+import { generateReceiptPdf, receiptTemplateFromLabel } from '../utils/pdfGenerator';
 import { SawaaLogo } from './SawaaLogo';
 import { ReceiptTemplate } from './ReceiptTemplate';
 
@@ -100,6 +100,7 @@ export const CustomerShareReceiptModal: React.FC<CustomerShareReceiptModalProps>
   const [isSharing, setIsSharing] = useState<boolean>(false);
 
   const businessName = businessSettings?.businessName || 'Dairy Diary';
+  const templateVariant = receiptTemplateFromLabel(businessSettings?.receiptTemplate);
 
   // Hidden receipt card, captured via html2canvas when the Due Receipt is shared.
   const receiptRef = useRef<HTMLDivElement>(null);
@@ -184,7 +185,9 @@ export const CustomerShareReceiptModal: React.FC<CustomerShareReceiptModalProps>
     // Reuses the same monthEntriesForReceipt filter fix as the new receipt image, so the
     // PDF's own transaction/day-stats data is scoped to this month too, not all-time
     // (it already has its own all-time fallback for contacts with no entries this month).
-    return generateSawaaPdfDocument(
+    // generateReceiptPdf dispatches to the Modern/Thermal/Ledger generator based on the
+    // business's selected template (businessSettings.receiptTemplate).
+    return generateReceiptPdf(
       contact,
       monthEntriesForReceipt,
       activeMonthDisplay,
@@ -196,7 +199,9 @@ export const CustomerShareReceiptModal: React.FC<CustomerShareReceiptModalProps>
         periodDue: metrics.due,
         previousDue: metrics.previousDue,
         totalOutstanding: metrics.totalOutstanding,
-      }
+      },
+      false,
+      templateVariant
     );
   };
 
@@ -635,6 +640,8 @@ export const CustomerShareReceiptModal: React.FC<CustomerShareReceiptModalProps>
         <div style={{ position: 'fixed', top: 0, left: '-9999px', zIndex: -1 }} aria-hidden="true">
           <ReceiptTemplate
             ref={receiptRef}
+            variant={templateVariant}
+            entries={monthEntriesForReceipt}
             businessName={businessName}
             businessPhone={businessSettings?.phone}
             businessLocation={businessSettings?.location}

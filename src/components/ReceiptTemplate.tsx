@@ -1,7 +1,10 @@
 import React from 'react';
 import { SawaaLogo } from './SawaaLogo';
+import type { LedgerEntry } from '../types/dairy';
 
 export interface ReceiptTemplateProps {
+  variant?: 'modern' | 'thermal' | 'ledger';
+  entries?: LedgerEntry[]; // used by the ledger variant for the real per-day table
   businessName: string;
   businessPhone?: string;
   businessLocation?: string;
@@ -31,9 +34,18 @@ export interface ReceiptTemplateProps {
 // whole capture throw ("Attempting to parse an unsupported color function oklch") and
 // silently fall back to a text-only share. Non-color layout classes (flex, grid,
 // spacing, rounding, font-size/weight) are unaffected and safe to keep as Tailwind.
+//
+// Three variants, selected by the business's chosen receipt template (Settings):
+// - 'modern' (default): the original design below, unchanged.
+// - 'thermal': narrow (58mm-style), monospace, black & white — a printable slip.
+// - 'ledger': dense Date/Shift/Liters/Rate/Amount table from `entries`, falling back
+//   to the modern aggregate grid when `entries` is undefined (e.g. the Settings
+//   preview, which has no real customer entries to show).
 export const ReceiptTemplate = React.forwardRef<HTMLDivElement, ReceiptTemplateProps>(
   (
     {
+      variant = 'modern',
+      entries,
       businessName,
       businessPhone,
       businessLocation,
@@ -55,6 +67,236 @@ export const ReceiptTemplate = React.forwardRef<HTMLDivElement, ReceiptTemplateP
     const isAllClear = totalOutstanding <= 0;
     const fmt = (n: number) => `${currencySymbol}${Math.round(n).toLocaleString('en-PK')}`;
 
+    // =========================================================================
+    // THERMAL (58mm) — narrow, monospace, black & white, dashed-line dividers.
+    // =========================================================================
+    if (variant === 'thermal') {
+      const divider = '-'.repeat(32);
+      const rowStyle: React.CSSProperties = {
+        display: 'flex',
+        justifyContent: 'space-between',
+        fontSize: '11px',
+        color: '#000000',
+        marginTop: '3px',
+      };
+      const dividerStyle: React.CSSProperties = {
+        fontSize: '10px',
+        color: '#000000',
+        textAlign: 'center',
+        margin: '8px 0',
+        letterSpacing: '-0.5px',
+      };
+
+      return (
+        <div
+          ref={ref}
+          style={{
+            width: '260px',
+            backgroundColor: '#ffffff',
+            color: '#000000',
+            fontFamily: "'Courier New', Courier, monospace",
+            padding: '16px 14px',
+          }}
+        >
+          <div style={{ textAlign: 'center', fontWeight: 700, fontSize: '14px' }}>
+            {businessName.toUpperCase()}
+          </div>
+          {businessPhone && (
+            <div style={{ textAlign: 'center', fontSize: '11px', marginTop: '3px' }}>{businessPhone}</div>
+          )}
+          {businessLocation && (
+            <div style={{ textAlign: 'center', fontSize: '10px', marginTop: '2px' }}>{businessLocation}</div>
+          )}
+          <div style={dividerStyle}>{divider}</div>
+
+          <div style={{ fontSize: '11px' }}>Billed To:</div>
+          <div style={{ fontSize: '13px', fontWeight: 700, marginTop: '2px' }}>{customerName}</div>
+          {customerAddress && <div style={{ fontSize: '10px', marginTop: '1px' }}>{customerAddress}</div>}
+          <div style={rowStyle}>
+            <span>Period:</span>
+            <span>{periodTitle}</span>
+          </div>
+          <div style={dividerStyle}>{divider}</div>
+
+          <div style={rowStyle}>
+            <span>Milk</span>
+            <span>{totalMilk.toFixed(2)} L</span>
+          </div>
+          <div style={rowStyle}>
+            <span>Rate</span>
+            <span>{currencySymbol}{avgRate.toFixed(1)}/L</span>
+          </div>
+          <div style={rowStyle}>
+            <span>Days Taken</span>
+            <span>{daysTaken}</span>
+          </div>
+          <div style={rowStyle}>
+            <span>Days Missed</span>
+            <span>{missedDaysLabel}</span>
+          </div>
+          <div style={dividerStyle}>{divider}</div>
+
+          <div style={{ ...rowStyle, fontWeight: 700 }}>
+            <span>Total Amt</span>
+            <span>{fmt(totalAmount)}</span>
+          </div>
+          <div style={rowStyle}>
+            <span>Received</span>
+            <span>{fmt(totalReceived)}</span>
+          </div>
+          <div style={dividerStyle}>{divider}</div>
+
+          <div style={{ textAlign: 'center', fontSize: '12px', fontWeight: 700 }}>BALANCE DUE</div>
+          <div style={{ textAlign: 'center', fontSize: '19px', fontWeight: 700, marginTop: '3px' }}>
+            {fmt(totalOutstanding)}
+          </div>
+          <div style={dividerStyle}>{divider}</div>
+
+          <div style={{ textAlign: 'center', fontSize: '12px', fontWeight: 700 }}>Thank you!</div>
+          <div style={{ textAlign: 'center', fontSize: '9px', marginTop: '3px' }}>Dairy Diary</div>
+        </div>
+      );
+    }
+
+    // =========================================================================
+    // COMPACT LEDGER SHEET — dense Date/Shift/Liters/Rate/Amount table.
+    // =========================================================================
+    if (variant === 'ledger') {
+      const thStyle: React.CSSProperties = {
+        padding: '6px 8px',
+        textAlign: 'left',
+        color: '#0B8F68',
+        fontWeight: 700,
+        fontSize: '9px',
+        borderBottom: '1px solid #cbd5e1',
+      };
+      const tdStyle: React.CSSProperties = {
+        padding: '5px 8px',
+        color: '#0f172a',
+        fontSize: '10px',
+        borderBottom: '1px solid #e2e8f0',
+      };
+
+      const sortedEntries = entries
+        ? [...entries].sort((a, b) => a.date.localeCompare(b.date) || a.timestamp.localeCompare(b.timestamp))
+        : null;
+
+      return (
+        <div
+          ref={ref}
+          style={{
+            width: '390px',
+            backgroundColor: '#ffffff',
+            border: '1px solid #cbd5e1',
+            fontFamily: 'Helvetica, Arial, sans-serif',
+          }}
+        >
+          <div style={{ backgroundColor: '#006B52', padding: '14px 16px' }}>
+            <div style={{ color: '#ffffff', fontSize: '15px', fontWeight: 900 }}>
+              {businessName.toUpperCase()} — LEDGER
+            </div>
+            <div style={{ color: '#d1fae5', fontSize: '11px', marginTop: '3px' }}>
+              {customerName} · {periodTitle}
+            </div>
+          </div>
+
+          {sortedEntries ? (
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ backgroundColor: '#E1F3EA' }}>
+                  <th style={thStyle}>Date</th>
+                  <th style={thStyle}>Shift</th>
+                  <th style={thStyle}>Liters</th>
+                  <th style={thStyle}>Rate</th>
+                  <th style={thStyle}>Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sortedEntries.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} style={{ ...tdStyle, textAlign: 'center', color: '#94a3b8' }}>
+                      No transactions recorded for this period.
+                    </td>
+                  </tr>
+                ) : (
+                  sortedEntries.map((e, idx) => (
+                    <tr key={e.id} style={{ backgroundColor: idx % 2 === 0 ? '#ffffff' : '#f8fafc' }}>
+                      <td style={tdStyle}>{e.date}</td>
+                      <td style={tdStyle}>{e.shift === 'morning' ? 'AM' : 'PM'}</td>
+                      <td style={tdStyle}>{e.liters.toFixed(2)} L</td>
+                      <td style={tdStyle}>{currencySymbol}{e.ratePerLiter.toFixed(1)}</td>
+                      <td style={{ ...tdStyle, fontWeight: 700 }}>{fmt(e.totalAmount)}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          ) : (
+            // No entries passed (e.g. Settings live preview) — fall back to the same
+            // aggregate grid the Modern design uses, so the preview still shows numbers.
+            <div style={{ padding: '14px 16px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+              <div>
+                <span style={{ fontSize: '9px', color: '#94a3b8', fontWeight: 700, textTransform: 'uppercase' }}>
+                  Total Milk
+                </span>
+                <span style={{ display: 'block', fontSize: '13px', fontWeight: 900, color: '#0f172a' }}>
+                  {totalMilk.toFixed(2)} L
+                </span>
+              </div>
+              <div>
+                <span style={{ fontSize: '9px', color: '#94a3b8', fontWeight: 700, textTransform: 'uppercase' }}>
+                  Rate
+                </span>
+                <span style={{ display: 'block', fontSize: '13px', fontWeight: 900, color: '#0f172a' }}>
+                  {currencySymbol}{avgRate.toFixed(0)}/L
+                </span>
+              </div>
+            </div>
+          )}
+
+          <div style={{ padding: '10px 16px', borderTop: '1px solid #cbd5e1', backgroundColor: '#f1f5f9' }}>
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                fontSize: '11px',
+                fontWeight: 900,
+                color: '#006B52',
+              }}
+            >
+              <span>TOTAL MILK</span>
+              <span>{totalMilk.toFixed(2)} L</span>
+            </div>
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                fontSize: '11px',
+                fontWeight: 900,
+                color: '#006B52',
+                marginTop: '4px',
+              }}
+            >
+              <span>TOTAL BILL</span>
+              <span>{fmt(totalAmount)}</span>
+            </div>
+          </div>
+
+          <div style={{ padding: '10px 16px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: '#64748b' }}>
+              <span>Received: {fmt(totalReceived)}</span>
+              <span style={{ color: isAllClear ? '#0B8F68' : '#e11d48', fontWeight: 700 }}>
+                {isAllClear ? 'All Clear' : `Due: ${fmt(totalOutstanding)}`}
+              </span>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // =========================================================================
+    // MODERN (default) — unchanged from the original design.
+    // =========================================================================
     const labelStyle: React.CSSProperties = {
       fontSize: '10px',
       fontWeight: 700,
