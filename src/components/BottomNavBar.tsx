@@ -1,5 +1,5 @@
 import React from 'react';
-import { Home, BarChart2, Plus, BookOpen, Settings, Navigation } from 'lucide-react';
+import { Home, BarChart2, Plus, BookOpen, Settings } from 'lucide-react';
 import { ActiveNavTab } from '../types/dairy';
 
 interface BottomNavBarProps {
@@ -56,19 +56,6 @@ export const BottomNavBar: React.FC<BottomNavBarProps> = ({
             Add User
           </span>
         </div>
-
-        {/* 4. Tracker */}
-        <button
-          onClick={() => onTabSelect('tracker')}
-          className={`flex-1 flex flex-col items-center justify-center py-1 transition-all cursor-pointer ${
-            activeTab === 'tracker'
-              ? 'text-[#163B32] font-bold'
-              : 'text-[#55756D] hover:text-[#163B32]'
-          }`}
-        >
-          <Navigation className={`w-5 h-5 ${activeTab === 'tracker' ? 'stroke-[2.5]' : 'stroke-[1.8]'}`} />
-          <span className="text-[10px] font-medium mt-0.5">Tracker</span>
-        </button>
 
         {/* 5. Expenses */}
         <button

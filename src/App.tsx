@@ -858,6 +858,7 @@ export default function App() {
               totalOutstanding={currentSummary.totalOutstanding}
               previousBalance={currentSummary.totalPreviousDue}
               onOpenOutstandingInfo={() => setShowOutstandingModal(true)}
+              onOpenTracker={() => setActiveNavTab('tracker')}
             />
 
             {/* Search & Filter Controls */}

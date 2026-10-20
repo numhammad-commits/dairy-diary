@@ -1,5 +1,5 @@
 import React from 'react';
-import { Droplets, Banknote, AlertCircle, CheckCircle2, Info } from 'lucide-react';
+import { Droplets, Banknote, AlertCircle, CheckCircle2, Info, Navigation } from 'lucide-react';
 import { formatPKR, formatLiters } from '../utils/formatters';
 import { MonthSelector } from './MonthSelector';
 
@@ -13,6 +13,7 @@ interface FinancialSummaryCardProps {
   onOpenOutstandingInfo: () => void;
   currentMonthKey?: string;
   onMonthChange?: (newKey: string) => void;
+  onOpenTracker?: () => void;
 }
 
 export const FinancialSummaryCard: React.FC<FinancialSummaryCardProps> = ({
@@ -25,16 +26,30 @@ export const FinancialSummaryCard: React.FC<FinancialSummaryCardProps> = ({
   onOpenOutstandingInfo,
   currentMonthKey,
   onMonthChange,
+  onOpenTracker,
 }) => {
   return (
     <div className="mx-3 my-2 space-y-2 select-none">
       {/* Month Navigation Pill */}
       {currentMonthKey && onMonthChange && (
-        <div className="mb-2">
-          <MonthSelector
-            currentMonthKey={currentMonthKey}
-            onMonthChange={onMonthChange}
-          />
+        <div className="mb-2 flex items-center gap-2">
+          <div className="flex-1 min-w-0">
+            <MonthSelector
+              currentMonthKey={currentMonthKey}
+              onMonthChange={onMonthChange}
+            />
+          </div>
+          {onOpenTracker && (
+            <button
+              type="button"
+              onClick={onOpenTracker}
+              className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white border border-[#D6E9E1] text-[#0B8F68] text-xs font-bold shadow-xs hover:bg-[#E1F3EA] active:scale-95 transition-all cursor-pointer"
+              title="Open Delivery Tracker"
+            >
+              <Navigation className="w-3.5 h-3.5" />
+              <span>Tracker</span>
+            </button>
+          )}
         </div>
       )}
 
