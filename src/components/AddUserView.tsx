@@ -389,7 +389,7 @@ export const AddUserView: React.FC<AddUserViewProps> = ({
 
       {/* 3. Step 2: Customer Form */}
       {currentStep === 'form' && (
-        <form onSubmit={handleSubmit} className="flex-1 min-h-0 flex flex-col justify-between overflow-y-auto">
+        <form onSubmit={handleSubmit} className="flex-1 min-h-0 flex flex-col justify-between overflow-y-auto pb-32">
           <div className="p-4 space-y-4 max-w-md mx-auto w-full pb-8">
             
             {/* Avatar / Camera */}
