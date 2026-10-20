@@ -408,13 +408,20 @@ export default function App() {
 
   // 7. Handlers for Ledger Mutations
   const handleSaveEntry = (newEntryData: Omit<LedgerEntry, 'id'>) => {
-    // Requirement 3: Check for duplicate customer delivery (database-level check)
-    const isDuplicate = entries.some(
-      (e) =>
-        e.contactId === newEntryData.contactId &&
-        e.date === newEntryData.date &&
-        e.shift === newEntryData.shift
-    );
+    // Requirement 3: Check for duplicate customer delivery (database-level check).
+    // Type-aware: a milk entry and a product entry (or two different products) on the
+    // same contactId+date+shift are NOT duplicates of each other — only an exact
+    // same-kind match is (unchanged behavior for milk-vs-milk).
+    const newKind = newEntryData.entryType || 'milk';
+    const isDuplicate = entries.some((e) => {
+      if (e.contactId !== newEntryData.contactId || e.date !== newEntryData.date || e.shift !== newEntryData.shift) {
+        return false;
+      }
+      const existingKind = e.entryType || 'milk';
+      if (existingKind !== newKind) return false;
+      if (newKind === 'product') return e.productType === newEntryData.productType;
+      return true;
+    });
     if (isDuplicate) {
       showToast("⚠️ Delivery already entered for this customer on this shift");
       return;

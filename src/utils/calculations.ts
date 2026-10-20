@@ -41,6 +41,11 @@ export function getCustomerMonthDue(
     return true;
   });
 
+  // This sums `totalAmount`/`receivedAmount` generically across every entry, so dairy
+  // product entries (Yogurt, Paneer, Ghee, etc. — see LedgerEntry.entryType in
+  // types/dairy.ts) are already included here exactly like milk, with no formula changes
+  // needed. Only `liters` below stays milk-specific (product entries always report
+  // liters: 0).
   const liters = cEntries.reduce((sum, e) => sum + e.liters, 0);
   const amount = cEntries.reduce((sum, e) => sum + e.totalAmount, 0);
   const entriesReceived = cEntries.reduce((sum, e) => sum + (e.receivedAmount || 0), 0);

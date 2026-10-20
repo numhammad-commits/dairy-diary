@@ -1,6 +1,20 @@
 import { jsPDF } from 'jspdf';
-import { Contact, LedgerEntry, BusinessSettings } from '../types/dairy';
+import { Contact, LedgerEntry, BusinessSettings, PRODUCT_TYPE_LABELS } from '../types/dairy';
 import { getEnabledPaymentAccounts } from './paymentAccounts';
+
+// Dairy product entries (see LedgerEntry.entryType in types/dairy.ts) are rendered in the
+// same per-entry ledger tables as milk, just with a different category/quantity/rate label.
+function entryCategoryLabel(e: LedgerEntry): string {
+  if ((e.entryType || 'milk') === 'product') return PRODUCT_TYPE_LABELS[e.productType || 'other'].toUpperCase();
+  return (e.milkType || 'other').toUpperCase();
+}
+function entryQuantityLabel(e: LedgerEntry): string {
+  if ((e.entryType || 'milk') === 'product') return `${(e.productQuantity || 0).toFixed(2)} ${e.productUnit === 'kg' ? 'KG' : 'L'}`;
+  return `${e.liters.toFixed(2)} L`;
+}
+function entryRateValue(e: LedgerEntry): number {
+  return (e.entryType || 'milk') === 'product' ? (e.productRate || 0) : e.ratePerLiter;
+}
 
 export interface GeneratedPdfResult {
   blob: Blob;
@@ -404,11 +418,11 @@ export async function generateSawaaPdfDocument(
       curX += ledgerCols[1].width;
       doc.text(e.shift.toUpperCase(), curX, yPos + 4.5);
       curX += ledgerCols[2].width;
-      doc.text((e.milkType || 'other').toUpperCase(), curX, yPos + 4.5);
+      doc.text(entryCategoryLabel(e), curX, yPos + 4.5);
       curX += ledgerCols[3].width;
-      doc.text(`${e.liters.toFixed(2)} L`, curX, yPos + 4.5);
+      doc.text(entryQuantityLabel(e), curX, yPos + 4.5);
       curX += ledgerCols[4].width;
-      doc.text(`${currSym} ${e.ratePerLiter.toFixed(2)}`, curX, yPos + 4.5);
+      doc.text(`${currSym} ${entryRateValue(e).toFixed(2)}`, curX, yPos + 4.5);
       curX += ledgerCols[5].width;
       doc.setFont('helvetica', 'bold');
       doc.text(`${currSym} ${Math.round(e.totalAmount).toLocaleString()}`, curX, yPos + 4.5);
@@ -642,6 +656,7 @@ export async function generateThermalReceiptPdf(
   const currSym = businessSettings?.currencySymbol?.trim() || 'Rs';
 
   const totalMilk = financials?.totalMilk ?? entries.reduce((s, e) => s + e.liters, 0);
+  const productsAmount = entries.filter((e) => (e.entryType || 'milk') === 'product').reduce((s, e) => s + e.totalAmount, 0);
   const totalAmount = financials?.totalAmount ?? entries.reduce((s, e) => s + e.totalAmount, 0);
   const totalReceived = financials?.totalReceived ?? entries.reduce((s, e) => s + e.receivedAmount, 0);
   const periodDue = financials?.periodDue ?? (totalAmount - totalReceived);
@@ -667,7 +682,7 @@ export async function generateThermalReceiptPdf(
     1 + // divider
     1 + 1 + 1 + 1 + // Billed To label / customer name / period / date
     1 + // divider
-    1 + 1 + // milk / rate
+    1 + 1 + (productsAmount > 0 ? 1 : 0) + // milk / rate / products
     1 + // divider
     1 + 1 + (previousDue > 0 ? 1 : 0) + // total amt / received / prev due
     1 + // divider
@@ -723,6 +738,9 @@ export async function generateThermalReceiptPdf(
 
   row('Milk', `${totalMilk.toFixed(2)} L`);
   row('Rate', `${currSym}${avgRate.toFixed(1)}/L`);
+  if (productsAmount > 0) {
+    row('Products', `${currSym}${Math.round(productsAmount).toLocaleString()}`);
+  }
   dividerLine();
 
   row('Total Amt', `${currSym}${Math.round(totalAmount).toLocaleString()}`, true);
@@ -857,11 +875,11 @@ export async function generateLedgerSheetPdf(
       x += ledgerCols[1].width;
       doc.text(e.shift.toUpperCase(), x, yPos + 4.2);
       x += ledgerCols[2].width;
-      doc.text((e.milkType || 'other').toUpperCase(), x, yPos + 4.2);
+      doc.text(entryCategoryLabel(e), x, yPos + 4.2);
       x += ledgerCols[3].width;
-      doc.text(`${e.liters.toFixed(2)} L`, x, yPos + 4.2);
+      doc.text(entryQuantityLabel(e), x, yPos + 4.2);
       x += ledgerCols[4].width;
-      doc.text(`${currSym}${e.ratePerLiter.toFixed(1)}`, x, yPos + 4.2);
+      doc.text(`${currSym}${entryRateValue(e).toFixed(1)}`, x, yPos + 4.2);
       x += ledgerCols[5].width;
       doc.setFont('helvetica', 'bold');
       doc.text(`${currSym}${Math.round(e.totalAmount).toLocaleString()}`, x, yPos + 4.2);

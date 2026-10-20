@@ -9,7 +9,7 @@ import {
   Loader2,
   Check
 } from 'lucide-react';
-import { Contact, LedgerEntry, ShiftType, MilkType } from '../types/dairy';
+import { Contact, LedgerEntry, ShiftType, MilkType, ProductType, PRODUCT_TYPE_LABELS } from '../types/dairy';
 import { loadPersistedEntries } from '../utils/storage';
 import { getDeviceTodayDate, shiftDateString } from '../utils/formatters';
 
@@ -57,7 +57,9 @@ export const AddEntryScreen: React.FC<AddEntryContext> = ({
   const [paymentMode, setPaymentMode] = useState<'credit' | 'cash'>('credit');
   const [date, setDate] = useState<string>(actualTodayDate);
   const [shift, setShift] = useState<ShiftType>(defaultShift);
-  const [product, setProduct] = useState<string>('Milk');
+  const [entryKind, setEntryKind] = useState<'milk' | 'product'>('milk');
+  const [productType, setProductType] = useState<ProductType>('paneer');
+  const [productUnit, setProductUnit] = useState<'kg' | 'liters'>('kg');
   const [milkType, setMilkType] = useState<'other' | 'buffalo' | 'cow' | 'goat'>(defaultMilkType);
   const [quantity, setQuantity] = useState<string>(defaultQty);
   const [rate, setRate] = useState<string>(defaultRate.toString());
@@ -115,6 +117,10 @@ export const AddEntryScreen: React.FC<AddEntryContext> = ({
     }, 250);
   };
 
+  // Products don't expose a meaningful shift — fixed under the hood so the data model
+  // (LedgerEntry.shift is required) stays valid without showing the field to the user.
+  const effectiveShift: ShiftType = entryKind === 'product' ? 'morning' : shift;
+
   // Save Entry Handler
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -122,7 +128,7 @@ export const AddEntryScreen: React.FC<AddEntryContext> = ({
 
     const parsedQty = parseFloat(quantity);
     if (isNaN(parsedQty) || parsedQty <= 0) {
-      setErrorMessage('Please enter a valid milk quantity greater than 0.');
+      setErrorMessage('Please enter a valid quantity greater than 0.');
       return;
     }
 
@@ -132,14 +138,20 @@ export const AddEntryScreen: React.FC<AddEntryContext> = ({
       return;
     }
 
-    // 1. Requirement 3: Check for Duplicate Customer Delivery (same customer, date, shift)
+    // 1. Requirement 3: Check for Duplicate Customer Delivery (same customer, date, shift).
+    // Type-aware: a milk entry and a product entry (or two different products) on the same
+    // contactId+date+shift are NOT duplicates of each other — only an exact same-kind match
+    // is (unchanged behavior for milk-vs-milk).
     const recordsToCheck = existingEntries || loadPersistedEntries();
-    const isDuplicate = recordsToCheck.some(
-      (entry) =>
-        entry.contactId === customer.id &&
-        entry.date === date &&
-        entry.shift === shift
-    );
+    const isDuplicate = recordsToCheck.some((entry) => {
+      if (entry.contactId !== customer.id || entry.date !== date || entry.shift !== effectiveShift) {
+        return false;
+      }
+      const existingKind = entry.entryType || 'milk';
+      if (existingKind !== entryKind) return false;
+      if (entryKind === 'product') return entry.productType === productType;
+      return true;
+    });
 
     if (isDuplicate) {
       setShowDuplicateModal(true);
@@ -156,22 +168,40 @@ export const AddEntryScreen: React.FC<AddEntryContext> = ({
       hour12: true,
     });
 
-    const entryToSave: Omit<LedgerEntry, 'id'> = {
+    const baseEntry = {
       contactId: customer.id,
       contactName: customer.name,
       contactRole: customer.role,
       date,
       timestamp: timeStr,
-      shift,
-      milkType: milkType as MilkType,
-      liters: parsedQty,
-      ratePerLiter: parsedRate,
+      shift: effectiveShift,
       totalAmount,
       receivedAmount: isCash ? totalAmount : 0,
       dueAmount: isCash ? 0 : totalAmount,
-      paymentMode: isCash ? 'cash' : 'credit',
+      paymentMode: (isCash ? 'cash' : 'credit') as 'cash' | 'credit',
       notes: remarks.trim() || undefined,
     };
+
+    const entryToSave: Omit<LedgerEntry, 'id'> =
+      entryKind === 'product'
+        ? {
+            ...baseEntry,
+            milkType: 'other' as MilkType,
+            liters: 0,
+            ratePerLiter: 0,
+            entryType: 'product',
+            productType,
+            productQuantity: parsedQty,
+            productUnit,
+            productRate: parsedRate,
+          }
+        : {
+            ...baseEntry,
+            entryType: 'milk',
+            milkType: milkType as MilkType,
+            liters: parsedQty,
+            ratePerLiter: parsedRate,
+          };
 
     // 2. Requirement 2: Warning for Advance/Future Entries
     if (date > actualTodayDate) {
@@ -270,8 +300,38 @@ export const AddEntryScreen: React.FC<AddEntryContext> = ({
               </div>
             </div>
 
+            {/* Entry Kind Toggle: Milk vs Other Product */}
+            <div className="glass-card rounded-2xl p-1 border border-[#D6E9E1] shadow-xs flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setEntryKind('milk');
+                  setQuantity(defaultQty);
+                  setRate(defaultRate.toString());
+                }}
+                className={`flex-1 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                  entryKind === 'milk' ? 'bg-[#0B8F68] text-white shadow-xs' : 'text-[#55756D] hover:text-[#163B32]'
+                }`}
+              >
+                Milk
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setEntryKind('product');
+                  setQuantity('0.5');
+                  setRate('0');
+                }}
+                className={`flex-1 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                  entryKind === 'product' ? 'bg-[#0B8F68] text-white shadow-xs' : 'text-[#55756D] hover:text-[#163B32]'
+                }`}
+              >
+                Other Product
+              </button>
+            </div>
+
             {/* Date & Shift Row */}
-            <div className="grid grid-cols-2 gap-2.5">
+            <div className={entryKind === 'product' ? 'grid grid-cols-1 gap-2.5' : 'grid grid-cols-2 gap-2.5'}>
               {/* Left: Date Selector with Jump Arrows */}
               <div className="glass-card rounded-2xl p-2.5 border border-[#D6E9E1] shadow-xs flex items-center justify-between">
                 <button
@@ -304,42 +364,25 @@ export const AddEntryScreen: React.FC<AddEntryContext> = ({
                 </button>
               </div>
 
-              {/* Right: Shift Dropdown */}
-              <div className="relative glass-card rounded-2xl px-3 py-2.5 border border-[#D6E9E1] shadow-xs flex items-center justify-between">
-                <select
-                  value={shift}
-                  onChange={(e) => setShift(e.target.value as ShiftType)}
-                  aria-label="Shift selector"
-                  className="w-full text-xs font-black text-[#163B32] bg-transparent outline-none cursor-pointer appearance-none pr-4"
-                >
-                  <option value="morning" className="bg-white text-[#163B32]">Morning</option>
-                  <option value="evening" className="bg-white text-[#163B32]">Evening</option>
-                </select>
-                <div className="pointer-events-none absolute right-3 text-[#55756D] text-xs">▼</div>
-              </div>
+              {/* Right: Shift Dropdown (milk only — products don't expose a shift field) */}
+              {entryKind === 'milk' && (
+                <div className="relative glass-card rounded-2xl px-3 py-2.5 border border-[#D6E9E1] shadow-xs flex items-center justify-between">
+                  <select
+                    value={shift}
+                    onChange={(e) => setShift(e.target.value as ShiftType)}
+                    aria-label="Shift selector"
+                    className="w-full text-xs font-black text-[#163B32] bg-transparent outline-none cursor-pointer appearance-none pr-4"
+                  >
+                    <option value="morning" className="bg-white text-[#163B32]">Morning</option>
+                    <option value="evening" className="bg-white text-[#163B32]">Evening</option>
+                  </select>
+                  <div className="pointer-events-none absolute right-3 text-[#55756D] text-xs">▼</div>
+                </div>
+              )}
             </div>
 
-            {/* Item / Product & Milk Type Row */}
-            <div className="grid grid-cols-2 gap-2.5">
-              {/* Item / Product */}
-              <div className="relative glass-card rounded-2xl px-3.5 py-2 border border-[#D6E9E1] shadow-xs flex flex-col justify-center">
-                <span className="text-[10px] font-bold text-[#55756D] uppercase tracking-wider block">
-                  Item / Product
-                </span>
-                <select
-                  value={product}
-                  onChange={(e) => setProduct(e.target.value)}
-                  aria-label="Item product selector"
-                  className="text-xs font-black text-[#163B32] bg-transparent outline-none cursor-pointer appearance-none pr-4 mt-0.5"
-                >
-                  <option value="Milk" className="bg-white text-[#163B32]">Milk</option>
-                  <option value="Yogurt" className="bg-white text-[#163B32]">Yogurt</option>
-                  <option value="Butter" className="bg-white text-[#163B32]">Butter</option>
-                </select>
-                <div className="pointer-events-none absolute right-3 bottom-2 text-[#55756D] text-xs">▼</div>
-              </div>
-
-              {/* Milk Type */}
+            {entryKind === 'milk' ? (
+              /* Milk Type */
               <div className="relative glass-card rounded-2xl px-3.5 py-2 border border-[#D6E9E1] shadow-xs flex flex-col justify-center">
                 <span className="text-[10px] font-bold text-[#55756D] uppercase tracking-wider block">
                   Milk Type
@@ -357,14 +400,50 @@ export const AddEntryScreen: React.FC<AddEntryContext> = ({
                 </select>
                 <div className="pointer-events-none absolute right-3 bottom-2 text-[#55756D] text-xs">▼</div>
               </div>
-            </div>
+            ) : (
+              /* Product Type & Unit */
+              <div className="grid grid-cols-2 gap-2.5">
+                <div className="relative glass-card rounded-2xl px-3.5 py-2 border border-[#D6E9E1] shadow-xs flex flex-col justify-center">
+                  <span className="text-[10px] font-bold text-[#55756D] uppercase tracking-wider block">
+                    Product Type
+                  </span>
+                  <select
+                    value={productType}
+                    onChange={(e) => setProductType(e.target.value as ProductType)}
+                    aria-label="Product type selector"
+                    className="text-xs font-black text-[#163B32] bg-transparent outline-none cursor-pointer appearance-none pr-4 mt-0.5"
+                  >
+                    {(Object.entries(PRODUCT_TYPE_LABELS) as [ProductType, string][]).map(([value, label]) => (
+                      <option key={value} value={value} className="bg-white text-[#163B32]">{label}</option>
+                    ))}
+                  </select>
+                  <div className="pointer-events-none absolute right-3 bottom-2 text-[#55756D] text-xs">▼</div>
+                </div>
+
+                <div className="relative glass-card rounded-2xl px-3.5 py-2 border border-[#D6E9E1] shadow-xs flex flex-col justify-center">
+                  <span className="text-[10px] font-bold text-[#55756D] uppercase tracking-wider block">
+                    Unit
+                  </span>
+                  <select
+                    value={productUnit}
+                    onChange={(e) => setProductUnit(e.target.value as 'kg' | 'liters')}
+                    aria-label="Product unit selector"
+                    className="text-xs font-black text-[#163B32] bg-transparent outline-none cursor-pointer appearance-none pr-4 mt-0.5"
+                  >
+                    <option value="kg" className="bg-white text-[#163B32]">Kg</option>
+                    <option value="liters" className="bg-white text-[#163B32]">Liters</option>
+                  </select>
+                  <div className="pointer-events-none absolute right-3 bottom-2 text-[#55756D] text-xs">▼</div>
+                </div>
+              </div>
+            )}
 
             {/* Financial Inputs: Quantity | Rate (Rs) | Total (Rs) */}
             <div className="grid grid-cols-3 gap-2">
               {/* Quantity */}
               <div className="relative glass-card rounded-2xl px-3 py-2 border border-[#D6E9E1] shadow-xs flex flex-col justify-center">
                 <span className="text-[10px] font-bold text-[#55756D] uppercase tracking-wider block">
-                  Quantity (L)
+                  Quantity ({entryKind === 'product' ? (productUnit === 'kg' ? 'Kg' : 'L') : 'L'})
                 </span>
                 <input
                   type="number"
@@ -402,29 +481,31 @@ export const AddEntryScreen: React.FC<AddEntryContext> = ({
               </div>
             </div>
 
-            {/* Quick Quantity Presets: [250ml] [500ml] [1L] [2L] [5L] */}
-            <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
-              {[
-                { label: '250ml', val: '0.25' },
-                { label: '500ml', val: '0.5' },
-                { label: '1L', val: '1.0' },
-                { label: '2L', val: '2.0' },
-                { label: '5L', val: '5.0' },
-              ].map((preset) => (
-                <button
-                  key={preset.label}
-                  type="button"
-                  onClick={() => handleSelectPreset(preset.val)}
-                  className={`flex-1 py-1.5 px-3 rounded-xl border text-xs font-black transition-all cursor-pointer ${
-                    quantity === preset.val
-                      ? 'bg-[#0B8F68] text-white border-[#0B8F68] shadow-xs'
-                      : 'bg-white text-[#55756D] hover:text-[#163B32] border-[#D6E9E1]'
-                  }`}
-                >
-                  {preset.label}
-                </button>
-              ))}
-            </div>
+            {/* Quick Quantity Presets: [250ml] [500ml] [1L] [2L] [5L] (milk only) */}
+            {entryKind === 'milk' && (
+              <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
+                {[
+                  { label: '250ml', val: '0.25' },
+                  { label: '500ml', val: '0.5' },
+                  { label: '1L', val: '1.0' },
+                  { label: '2L', val: '2.0' },
+                  { label: '5L', val: '5.0' },
+                ].map((preset) => (
+                  <button
+                    key={preset.label}
+                    type="button"
+                    onClick={() => handleSelectPreset(preset.val)}
+                    className={`flex-1 py-1.5 px-3 rounded-xl border text-xs font-black transition-all cursor-pointer ${
+                      quantity === preset.val
+                        ? 'bg-[#0B8F68] text-white border-[#0B8F68] shadow-xs'
+                        : 'bg-white text-[#55756D] hover:text-[#163B32] border-[#D6E9E1]'
+                    }`}
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+            )}
 
             {/* Remarks + Photo Row */}
             <div className="grid grid-cols-3 gap-2.5">
@@ -527,7 +608,11 @@ export const AddEntryScreen: React.FC<AddEntryContext> = ({
                 ⚠️ Delivery Already Entered
               </h3>
               <p className="text-xs text-slate-600 mt-2 leading-relaxed">
-                This customer&apos;s delivery has already been entered for <span className="font-bold text-slate-800">{formattedDateDisplay}</span> ({shift === 'morning' ? 'Morning Shift' : 'Evening Shift'}).
+                {entryKind === 'product' ? (
+                  <>A <span className="font-bold text-slate-800">{PRODUCT_TYPE_LABELS[productType]}</span> entry has already been recorded for <span className="font-bold text-slate-800">{formattedDateDisplay}</span>.</>
+                ) : (
+                  <>This customer&apos;s delivery has already been entered for <span className="font-bold text-slate-800">{formattedDateDisplay}</span> ({shift === 'morning' ? 'Morning Shift' : 'Evening Shift'}).</>
+                )}
               </p>
               <div className="mt-4">
                 <button

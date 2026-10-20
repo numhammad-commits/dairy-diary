@@ -26,7 +26,7 @@ import {
   AlertTriangle,
   Trash2
 } from 'lucide-react';
-import { Contact, LedgerEntry, ShiftType, MilkType, BusinessSettings, PaymentRecord } from '../types/dairy';
+import { Contact, LedgerEntry, ShiftType, MilkType, BusinessSettings, PaymentRecord, ProductType, PRODUCT_TYPE_LABELS } from '../types/dairy';
 import { formatPKR, formatLiters, getMonthDisplay, shiftMonthKey, generateWhatsAppMessage, getDeviceTodayDate, getDeviceCurrentMonthKey, formatDairyReceiptText } from '../utils/formatters';
 import { getCustomerMonthDue } from '../utils/calculations';
 import { generateSawaaPdfDocument } from '../utils/pdfGenerator';
@@ -47,6 +47,33 @@ function getBackStack(): Array<() => void> {
   const w = window as any;
   if (!w.__ddBackStack) w.__ddBackStack = [];
   return w.__ddBackStack;
+}
+
+type EntryFilterOption = 'all' | 'received' | 'cow' | 'buffalo' | 'goat' | 'paneer' | 'ghee' | 'mawa' | 'yogurt' | 'lassi' | 'other';
+
+const ENTRY_FILTER_OPTIONS: { value: EntryFilterOption; label: string }[] = [
+  { value: 'all', label: 'All' },
+  { value: 'received', label: 'Received' },
+  { value: 'cow', label: 'Cow Milk' },
+  { value: 'buffalo', label: 'Buffalo Milk' },
+  { value: 'goat', label: 'Goat Milk' },
+  { value: 'paneer', label: 'Paneer / Cheese' },
+  { value: 'ghee', label: 'Ghee / Butter' },
+  { value: 'mawa', label: 'Mawa' },
+  { value: 'yogurt', label: 'Yogurt / Dahi' },
+  { value: 'lassi', label: 'Lassi / Chaach' },
+  { value: 'other', label: 'Other' },
+];
+
+function matchesEntryFilter(e: LedgerEntry, filter: EntryFilterOption): boolean {
+  if (filter === 'all') return true;
+  if (filter === 'received') return e.dueAmount <= 0 && e.totalAmount > 0;
+  const kind = e.entryType || 'milk';
+  if (filter === 'cow') return kind === 'milk' && e.milkType === 'cow';
+  if (filter === 'buffalo') return kind === 'milk' && e.milkType === 'buffalo';
+  if (filter === 'goat') return kind === 'milk' && e.milkType === 'goat';
+  if (filter === 'other') return (kind === 'milk' && ((e.milkType as string) === 'other' || e.milkType === 'mix')) || (kind === 'product' && e.productType === 'other');
+  return kind === 'product' && e.productType === filter;
 }
 
 interface ContactDetailModalProps {
@@ -113,7 +140,7 @@ export const ContactDetailModal: React.FC<ContactDetailModalProps> = ({
   
   // Search & Filter State
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [shiftFilter, setShiftFilter] = useState<'all' | 'morning' | 'evening'>('all');
+  const [entryFilter, setEntryFilter] = useState<EntryFilterOption>('all');
   const [showFilterDrawer, setShowFilterDrawer] = useState<boolean>(false);
 
   // Modals & Action Sheets State
@@ -256,17 +283,18 @@ export const ContactDetailModal: React.FC<ContactDetailModalProps> = ({
           e.timestamp.toLowerCase().includes(q) ||
           e.shift.toLowerCase().includes(q) ||
           e.liters.toString().includes(q) ||
-          e.totalAmount.toString().includes(q)
+          e.totalAmount.toString().includes(q) ||
+          (e.productQuantity !== undefined && e.productQuantity.toString().includes(q))
       );
     }
 
-    if (shiftFilter !== 'all') {
-      result = result.filter((e) => e.shift === shiftFilter);
+    if (entryFilter !== 'all') {
+      result = result.filter((e) => matchesEntryFilter(e, entryFilter));
     }
 
     // Sort descending by date and time
     return result.sort((a, b) => b.date.localeCompare(a.date) || b.timestamp.localeCompare(a.timestamp));
-  }, [contactEntries, searchQuery, shiftFilter]);
+  }, [contactEntries, searchQuery, entryFilter]);
 
   // Reactive Month Financial Calculations (Single source of truth via getCustomerMonthDue)
   const metrics = useMemo(() => {
@@ -380,7 +408,10 @@ export const ContactDetailModal: React.FC<ContactDetailModalProps> = ({
   };
 
   const handlePrintRow = (entry: LedgerEntry) => {
-    triggerToast(`Printing Receipt for ${entry.date} (${entry.liters} L)...`);
+    const qtyLabel = (entry.entryType || 'milk') === 'product'
+      ? `${entry.productQuantity} ${entry.productUnit === 'kg' ? 'Kg' : 'L'}`
+      : `${entry.liters} L`;
+    triggerToast(`Printing Receipt for ${entry.date} (${qtyLabel})...`);
     window.print();
   };
 
@@ -825,18 +856,41 @@ export const ContactDetailModal: React.FC<ContactDetailModalProps> = ({
                 )}
               </div>
 
-              {/* Secondary Adjustments: Filter Sliders Button */}
-              <button
-                onClick={() => setShowFilterDrawer(!showFilterDrawer)}
-                className={`w-9 h-9 rounded-full flex items-center justify-center shadow-xs transition-all cursor-pointer shrink-0 border border-[#D6E9E1] ${
-                  shiftFilter !== 'all' 
-                    ? 'bg-[#0B8F68] text-white border-[#0B8F68]' 
-                    : 'bg-white text-[#55756D] hover:text-[#163B32]'
-                }`}
-                title="Filter Shift"
-              >
-                <SlidersHorizontal className="w-4 h-4 stroke-[2.2]" />
-              </button>
+              {/* Secondary Adjustments: Filter Dropdown Button */}
+              <div className="relative">
+                <button
+                  onClick={() => setShowFilterDrawer(!showFilterDrawer)}
+                  className={`w-9 h-9 rounded-full flex items-center justify-center shadow-xs transition-all cursor-pointer shrink-0 border border-[#D6E9E1] ${
+                    entryFilter !== 'all'
+                      ? 'bg-[#0B8F68] text-white border-[#0B8F68]'
+                      : 'bg-white text-[#55756D] hover:text-[#163B32]'
+                  }`}
+                  title="Filter Entries"
+                >
+                  <SlidersHorizontal className="w-4 h-4 stroke-[2.2]" />
+                </button>
+
+                {showFilterDrawer && (
+                  <div className="absolute right-0 mt-1 w-48 max-h-72 overflow-y-auto bg-white rounded-2xl shadow-2xl border border-slate-200 py-1.5 z-50 text-xs font-bold">
+                    {ENTRY_FILTER_OPTIONS.map((opt) => (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        onClick={() => {
+                          setEntryFilter(opt.value);
+                          setShowFilterDrawer(false);
+                        }}
+                        className={`w-full px-3.5 py-2 text-left hover:bg-slate-50 flex items-center justify-between gap-2 cursor-pointer ${
+                          entryFilter === opt.value ? 'text-[#0B8F68]' : 'text-[#163B32]'
+                        }`}
+                      >
+                        <span>{opt.label}</span>
+                        {entryFilter === opt.value && <Check className="w-3.5 h-3.5 text-[#0B8F68]" />}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
 
               {/* Action Alert Box: Bold Red PAYMENT REMINDER button */}
               <button
@@ -846,39 +900,6 @@ export const ContactDetailModal: React.FC<ContactDetailModalProps> = ({
                 <span>PAYMENT REMINDER</span>
               </button>
             </div>
-
-            {/* Shift Filter Quick Toggle Pill row when toggled */}
-            {showFilterDrawer && (
-              <div className="glass-card rounded-2xl p-2.5 border border-[#D6E9E1] shadow-xs flex items-center justify-between text-xs font-bold animate-in fade-in">
-                <span className="text-[#163B32]">Filter Shift:</span>
-                <div className="flex items-center gap-1.5">
-                  <button
-                    onClick={() => setShiftFilter('all')}
-                    className={`px-2.5 py-1 rounded-full text-xs transition-colors ${
-                      shiftFilter === 'all' ? 'bg-[#0B8F68] text-white' : 'text-[#55756D] hover:bg-slate-100'
-                    }`}
-                  >
-                    All
-                  </button>
-                  <button
-                    onClick={() => setShiftFilter('morning')}
-                    className={`px-2.5 py-1 rounded-full text-xs transition-colors ${
-                      shiftFilter === 'morning' ? 'bg-[#0B8F68] text-white' : 'text-[#55756D] hover:bg-slate-100'
-                    }`}
-                  >
-                    Morning
-                  </button>
-                  <button
-                    onClick={() => setShiftFilter('evening')}
-                    className={`px-2.5 py-1 rounded-full text-xs transition-colors ${
-                      shiftFilter === 'evening' ? 'bg-[#0B8F68] text-white' : 'text-[#55756D] hover:bg-slate-100'
-                    }`}
-                  >
-                    Evening
-                  </button>
-                </div>
-              </div>
-            )}
 
             {/* 5. "October 2026" Daily Collection Entry Log Checklist */}
             <div className="space-y-2 pt-1">
@@ -919,17 +940,31 @@ export const ContactDetailModal: React.FC<ContactDetailModalProps> = ({
                         title="Tap to edit this transaction"
                       >
                         {/* Left Column Product Block */}
-                        <div className="bg-[#E1F3EA] rounded-xl px-2.5 py-1.5 text-center border border-[#D6E9E1] min-w-[76px] shrink-0">
-                          <span className="text-xs font-black text-[#163B32] block leading-tight">
-                            {entry.liters} Ltr
-                          </span>
-                          <span className="text-[10px] font-semibold text-[#55756D] block leading-tight mt-0.5">
-                            📦 Other
-                          </span>
-                          <span className="text-[10px] font-bold text-[#0B8F68] block leading-tight mt-0.5">
-                            Rs{entry.ratePerLiter}/L
-                          </span>
-                        </div>
+                        {(entry.entryType || 'milk') === 'product' ? (
+                          <div className="bg-[#E1F3EA] rounded-xl px-2.5 py-1.5 text-center border border-[#D6E9E1] min-w-[76px] shrink-0">
+                            <span className="text-xs font-black text-[#163B32] block leading-tight">
+                              {entry.productQuantity} {entry.productUnit === 'kg' ? 'Kg' : 'Ltr'}
+                            </span>
+                            <span className="text-[10px] font-semibold text-[#55756D] block leading-tight mt-0.5">
+                              {PRODUCT_TYPE_LABELS[entry.productType || 'other']}
+                            </span>
+                            <span className="text-[10px] font-bold text-[#0B8F68] block leading-tight mt-0.5">
+                              Rs{entry.productRate}/{entry.productUnit === 'kg' ? 'Kg' : 'L'}
+                            </span>
+                          </div>
+                        ) : (
+                          <div className="bg-[#E1F3EA] rounded-xl px-2.5 py-1.5 text-center border border-[#D6E9E1] min-w-[76px] shrink-0">
+                            <span className="text-xs font-black text-[#163B32] block leading-tight">
+                              {entry.liters} Ltr
+                            </span>
+                            <span className="text-[10px] font-semibold text-[#55756D] block leading-tight mt-0.5">
+                              📦 Other
+                            </span>
+                            <span className="text-[10px] font-bold text-[#0B8F68] block leading-tight mt-0.5">
+                              Rs{entry.ratePerLiter}/L
+                            </span>
+                          </div>
+                        )}
 
                         {/* Central Column Timeline Block */}
                         <div className="flex-1 min-w-0 px-1">
@@ -937,19 +972,21 @@ export const ContactDetailModal: React.FC<ContactDetailModalProps> = ({
                             {displayDateStr} <span className="text-[#D6E9E1] font-normal">|</span> <span className="text-xs text-[#55756D] font-medium">{entry.timestamp}</span>
                           </div>
 
-                          <div className="mt-1 flex items-center">
-                            {isMorning ? (
-                              <span className="bg-amber-50 border border-amber-200 text-amber-800 px-2 py-0.5 rounded-full text-[10px] font-black flex items-center gap-1">
-                                <Sun className="w-3 h-3 text-amber-500 fill-amber-500" />
-                                <span>Morning</span>
-                              </span>
-                            ) : (
-                              <span className="bg-indigo-50 border border-indigo-200 text-indigo-800 px-2 py-0.5 rounded-full text-[10px] font-black flex items-center gap-1">
-                                <Moon className="w-3 h-3 text-indigo-500 fill-indigo-500" />
-                                <span>Evening</span>
-                              </span>
-                            )}
-                          </div>
+                          {(entry.entryType || 'milk') === 'milk' && (
+                            <div className="mt-1 flex items-center">
+                              {isMorning ? (
+                                <span className="bg-amber-50 border border-amber-200 text-amber-800 px-2 py-0.5 rounded-full text-[10px] font-black flex items-center gap-1">
+                                  <Sun className="w-3 h-3 text-amber-500 fill-amber-500" />
+                                  <span>Morning</span>
+                                </span>
+                              ) : (
+                                <span className="bg-indigo-50 border border-indigo-200 text-indigo-800 px-2 py-0.5 rounded-full text-[10px] font-black flex items-center gap-1">
+                                  <Moon className="w-3 h-3 text-indigo-500 fill-indigo-500" />
+                                  <span>Evening</span>
+                                </span>
+                              )}
+                            </div>
+                          )}
                         </div>
 
                         {/* Right Column Financial Metrics */}
