@@ -49,7 +49,7 @@ export const FinancialSummaryCard: React.FC<FinancialSummaryCardProps> = ({
             <span className="block text-xs font-semibold text-[#55756D] leading-tight mb-0.5">
               Milk
             </span>
-            <span className="text-lg sm:text-xl font-black text-[#163B32] tracking-tight leading-tight truncate block">
+            <span className="text-base sm:text-lg font-black text-[#163B32] tracking-tight leading-tight truncate block">
               {formatLiters(liters)}
             </span>
           </div>
@@ -64,7 +64,7 @@ export const FinancialSummaryCard: React.FC<FinancialSummaryCardProps> = ({
             <span className="block text-xs font-semibold text-[#55756D] leading-tight mb-0.5">
               Amount
             </span>
-            <span className="text-lg sm:text-xl font-black text-[#163B32] tracking-tight leading-tight truncate block">
+            <span className="text-base sm:text-lg font-black text-[#163B32] tracking-tight leading-tight truncate block">
               {formatPKR(amount)}
             </span>
           </div>
@@ -79,7 +79,7 @@ export const FinancialSummaryCard: React.FC<FinancialSummaryCardProps> = ({
             <span className="block text-xs font-semibold text-[#55756D] leading-tight mb-0.5">
               Due
             </span>
-            <span className="text-lg sm:text-xl font-black text-[#E5485D] tracking-tight leading-tight truncate block">
+            <span className="text-base sm:text-lg font-black text-[#E5485D] tracking-tight leading-tight truncate block">
               {formatPKR(due)}
             </span>
           </div>
@@ -94,7 +94,7 @@ export const FinancialSummaryCard: React.FC<FinancialSummaryCardProps> = ({
             <span className="block text-xs font-semibold text-[#55756D] leading-tight mb-0.5">
               Received
             </span>
-            <span className="text-lg sm:text-xl font-black text-[#0B9B72] tracking-tight leading-tight truncate block">
+            <span className="text-base sm:text-lg font-black text-[#0B9B72] tracking-tight leading-tight truncate block">
               {formatPKR(received)}
             </span>
           </div>
