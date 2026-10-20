@@ -27,6 +27,90 @@ const DRIVE_BACKUP_FILENAME_PREFIX = 'dairy-diary-backup';
 // localStorage (not a downloaded file) so no browser download prompt appears.
 const CLOUD_BACKUP_KEY = 'dairy_diary_cloud_backup_v1';
 
+// Persisted Google connection (email, access token, expiry) so "Connect" survives
+// closing/reopening the modal. Only drive.appdata + read-only identity scopes are ever
+// requested, so the low blast radius of keeping the token in localStorage is acceptable.
+const GOOGLE_AUTH_KEY = 'dairy_diary_google_auth_v1';
+const AUTO_BACKUP_SETTINGS_KEY = 'dairy_diary_auto_backup_settings_v1';
+const LAST_BACKUP_TIME_KEY = 'dairy_diary_last_backup_time';
+
+interface StoredGoogleAuth {
+  email: string | null;
+  accessToken: string | null;
+  expiresAt: number | null;
+}
+
+function loadGoogleAuth(): StoredGoogleAuth {
+  try {
+    const raw = localStorage.getItem(GOOGLE_AUTH_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return {
+        email: parsed.email || null,
+        accessToken: parsed.accessToken || null,
+        expiresAt: parsed.expiresAt || null,
+      };
+    }
+  } catch (err) {
+    console.error('Failed to load saved Google auth', err);
+  }
+  return { email: null, accessToken: null, expiresAt: null };
+}
+
+// Keeping the email even when accessToken/expiresAt are null lets the UI remember which
+// account was connected after the token expires, instead of reverting to "Not Connected".
+function saveGoogleAuth(email: string | null, accessToken: string | null, expiresAt: number | null): void {
+  try {
+    if (email) {
+      localStorage.setItem(GOOGLE_AUTH_KEY, JSON.stringify({ email, accessToken, expiresAt }));
+    } else {
+      localStorage.removeItem(GOOGLE_AUTH_KEY);
+    }
+  } catch (err) {
+    console.error('Failed to save Google auth', err);
+  }
+}
+
+function loadAutoBackupSettings(): { enabled: boolean; frequency: BackupFrequency } {
+  try {
+    const raw = localStorage.getItem(AUTO_BACKUP_SETTINGS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      const validFrequencies: BackupFrequency[] = ['daily', '3days', 'weekly'];
+      return {
+        enabled: Boolean(parsed.enabled),
+        frequency: validFrequencies.includes(parsed.frequency) ? parsed.frequency : 'daily',
+      };
+    }
+  } catch (err) {
+    console.error('Failed to load auto-backup settings', err);
+  }
+  return { enabled: false, frequency: 'daily' };
+}
+
+function saveAutoBackupSettings(enabled: boolean, frequency: BackupFrequency): void {
+  try {
+    localStorage.setItem(AUTO_BACKUP_SETTINGS_KEY, JSON.stringify({ enabled, frequency }));
+  } catch (err) {
+    console.error('Failed to save auto-backup settings', err);
+  }
+}
+
+function formatLastBackupTime(iso: string | null): string {
+  if (!iso) return 'Never';
+  try {
+    return new Date(iso).toLocaleString('en-US', {
+      month: 'short',
+      day: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  } catch {
+    return 'Never';
+  }
+}
+
 // Multipart upload straight to the hidden appDataFolder.
 async function uploadBackupToDrive(accessToken: string, filename: string, jsonData: string): Promise<void> {
   const metadata = { name: filename, parents: ['appDataFolder'] };
@@ -101,40 +185,76 @@ export const BackupModal: React.FC<BackupModalProps> = ({
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [restoreError, setRestoreError] = useState<string | null>(null);
-  const [autoBackupEnabled, setAutoBackupEnabled] = useState(false);
-  const [backupFrequency, setBackupFrequency] = useState<BackupFrequency>('daily');
+  const [autoBackupEnabled, setAutoBackupEnabled] = useState(() => loadAutoBackupSettings().enabled);
+  const [backupFrequency, setBackupFrequency] = useState<BackupFrequency>(() => loadAutoBackupSettings().frequency);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [lastBackupTime, setLastBackupTime] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem(LAST_BACKUP_TIME_KEY);
+    } catch {
+      return null;
+    }
+  });
 
   // Real Google account connection state (implicit OAuth flow — no backend, so the
-  // access token is short-lived (~1hr) and intentionally not persisted across reloads).
-  const [googleAccessToken, setGoogleAccessToken] = useState<string | null>(null);
-  const [googleTokenExpiresAt, setGoogleTokenExpiresAt] = useState<number | null>(null);
-  const [googleEmail, setGoogleEmail] = useState<string | null>(null);
+  // access token is short-lived (~1hr)). Persisted to localStorage so the connected
+  // account survives closing/reopening the modal; the email is kept even once the
+  // token itself expires, so "which account" is never forgotten.
+  const [googleAccessToken, setGoogleAccessToken] = useState<string | null>(() => loadGoogleAuth().accessToken);
+  const [googleTokenExpiresAt, setGoogleTokenExpiresAt] = useState<number | null>(() => loadGoogleAuth().expiresAt);
+  const [googleEmail, setGoogleEmail] = useState<string | null>(() => loadGoogleAuth().email);
   const [isConnecting, setIsConnecting] = useState(false);
   const [isBackingUpCloud, setIsBackingUpCloud] = useState(false);
   const [isRestoringCloud, setIsRestoringCloud] = useState(false);
 
-  const isGoogleConnected = Boolean(
+  // hasGoogleAccount: do we know which account was ever connected (persists past expiry).
+  // isGoogleTokenValid: is that connection actually usable right now.
+  const hasGoogleAccount = Boolean(googleEmail);
+  const isGoogleTokenValid = Boolean(
     googleAccessToken && googleTokenExpiresAt && Date.now() < googleTokenExpiresAt
   );
+
+  const recordBackupSuccess = () => {
+    const nowIso = new Date().toISOString();
+    try {
+      localStorage.setItem(LAST_BACKUP_TIME_KEY, nowIso);
+    } catch (err) {
+      console.error('Failed to save last backup time', err);
+    }
+    setLastBackupTime(nowIso);
+  };
+
+  // A real 401 means the token is dead, but we keep remembering which account it was.
+  const invalidateGoogleToken = () => {
+    setGoogleAccessToken(null);
+    setGoogleTokenExpiresAt(null);
+    saveGoogleAuth(googleEmail, null, null);
+  };
 
   const googleLogin = useGoogleLogin({
     flow: 'implicit',
     scope: GOOGLE_DRIVE_SCOPE,
     onSuccess: async (tokenResponse) => {
-      setGoogleAccessToken(tokenResponse.access_token);
-      setGoogleTokenExpiresAt(Date.now() + (tokenResponse.expires_in || 3600) * 1000);
+      const accessToken = tokenResponse.access_token;
+      const expiresAt = Date.now() + (tokenResponse.expires_in || 3600) * 1000;
+      setGoogleAccessToken(accessToken);
+      setGoogleTokenExpiresAt(expiresAt);
+
+      let email: string | null = null;
       try {
         const res = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-          headers: { Authorization: `Bearer ${tokenResponse.access_token}` },
+          headers: { Authorization: `Bearer ${accessToken}` },
         });
         if (res.ok) {
           const profile = await res.json();
-          setGoogleEmail(profile.email || null);
+          email = profile.email || null;
+          setGoogleEmail(email);
         }
       } catch (err) {
         console.error('Failed to fetch Google profile', err);
       }
+
+      saveGoogleAuth(email, accessToken, expiresAt);
 
       // Verify Drive access was actually granted — a misconfigured OAuth consent
       // screen (drive.appdata not registered as a scope) can let login succeed while
@@ -187,14 +307,17 @@ export const BackupModal: React.FC<BackupModalProps> = ({
   };
 
   // "BACK UP NOW (CLOUD)" — uploads to the connected Google account's hidden Drive
-  // appDataFolder. Falls back to an on-device localStorage snapshot if Google isn't
-  // connected, so the button still works without requiring a Google account.
+  // appDataFolder. Falls back to an on-device localStorage snapshot if Google has never
+  // been connected, so the button still works without requiring a Google account. If a
+  // previously-connected account's token has just expired, the button is disabled in the
+  // UI instead (see JSX) rather than silently falling back.
   const handleBackupNow = async () => {
     const data = exportFullDatabase();
 
-    if (!isGoogleConnected) {
+    if (!hasGoogleAccount) {
       try {
         localStorage.setItem(CLOUD_BACKUP_KEY, JSON.stringify({ savedAt: new Date().toISOString(), data }));
+        recordBackupSuccess();
         if (showToast) showToast('Connect Google for real cloud backup — saved to this device for now');
       } catch (err) {
         console.error('Failed to save backup to localStorage', err);
@@ -203,20 +326,23 @@ export const BackupModal: React.FC<BackupModalProps> = ({
       return;
     }
 
+    if (!isGoogleTokenValid) {
+      if (showToast) showToast('Your Google connection expired. Tap Connect to reconnect.');
+      return;
+    }
+
     setIsBackingUpCloud(true);
     setRestoreError(null);
     try {
       const filename = `${DRIVE_BACKUP_FILENAME_PREFIX}-${getDeviceTodayDate()}.json`;
       await uploadBackupToDrive(googleAccessToken!, filename, JSON.stringify(data));
+      recordBackupSuccess();
       if (showToast) showToast('Backup uploaded to Google Drive successfully');
     } catch (err) {
       console.error('Google Drive backup failed', err);
       const status = (err as { status?: number } | undefined)?.status;
       if (status === 401) {
-        // Token is actually dead — reflect that in the UI instead of showing a stale "Connected".
-        setGoogleAccessToken(null);
-        setGoogleTokenExpiresAt(null);
-        setGoogleEmail(null);
+        invalidateGoogleToken();
         setRestoreError('Your Google connection expired. Tap Connect again, then retry the backup.');
       } else {
         setRestoreError(`Failed to upload backup to Google Drive: ${(err as Error)?.message || 'unknown error'}`);
@@ -232,7 +358,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
   const handleRestoreFromCloud = async () => {
     setRestoreError(null);
 
-    if (!isGoogleConnected) {
+    if (!hasGoogleAccount) {
       try {
         const raw = localStorage.getItem(CLOUD_BACKUP_KEY);
         if (!raw) {
@@ -255,6 +381,11 @@ export const BackupModal: React.FC<BackupModalProps> = ({
       return;
     }
 
+    if (!isGoogleTokenValid) {
+      if (showToast) showToast('Your Google connection expired. Tap Connect to reconnect.');
+      return;
+    }
+
     setIsRestoringCloud(true);
     try {
       const json = await fetchLatestDriveBackup(googleAccessToken!);
@@ -271,9 +402,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
       console.error('Google Drive restore failed', err);
       const status = (err as { status?: number } | undefined)?.status;
       if (status === 401) {
-        setGoogleAccessToken(null);
-        setGoogleTokenExpiresAt(null);
-        setGoogleEmail(null);
+        invalidateGoogleToken();
         setRestoreError('Your Google connection expired. Tap Connect again, then retry the restore.');
       } else {
         setRestoreError(`Failed to restore from Google Drive: ${(err as Error)?.message || 'unknown error'}`);
@@ -347,11 +476,18 @@ export const BackupModal: React.FC<BackupModalProps> = ({
               </div>
               <div className="min-w-0">
                 <h4 className="text-sm font-bold text-[#163B32]">Google Account</h4>
-                {isGoogleConnected && googleEmail ? (
-                  <p className="text-xs text-[#0B8F68] font-semibold truncate flex items-center gap-1">
-                    <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
-                    <span className="truncate">{googleEmail}</span>
-                  </p>
+                {hasGoogleAccount ? (
+                  isGoogleTokenValid ? (
+                    <p className="text-xs text-[#0B8F68] font-semibold truncate flex items-center gap-1">
+                      <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                      <span className="truncate">{googleEmail}</span>
+                    </p>
+                  ) : (
+                    <p className="text-xs text-amber-600 font-semibold truncate flex items-center gap-1">
+                      <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                      <span className="truncate">{googleEmail} (Reconnect needed)</span>
+                    </p>
+                  )
                 ) : (
                   <p className="text-xs text-[#55756D] truncate">Not Connected</p>
                 )}
@@ -364,7 +500,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
               className="px-3.5 py-2 bg-white border border-[#0B8F68] text-[#0B8F68] text-xs font-extrabold rounded-xl hover:bg-[#E1F3EA] transition-colors cursor-pointer shrink-0 disabled:opacity-60 flex items-center gap-1.5"
             >
               {isConnecting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-              {isGoogleConnected ? 'Change' : 'Connect'}
+              {isGoogleTokenValid ? 'Change' : 'Connect'}
             </button>
           </div>
 
@@ -376,7 +512,10 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                 <input
                   type="checkbox"
                   checked={autoBackupEnabled}
-                  onChange={(e) => setAutoBackupEnabled(e.target.checked)}
+                  onChange={(e) => {
+                    setAutoBackupEnabled(e.target.checked);
+                    saveAutoBackupSettings(e.target.checked, backupFrequency);
+                  }}
                   className="sr-only peer"
                 />
                 <div className="w-11 h-6 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#0B8F68]"></div>
@@ -394,7 +533,10 @@ export const BackupModal: React.FC<BackupModalProps> = ({
                     name="backupFrequency"
                     value={opt.value}
                     checked={backupFrequency === opt.value}
-                    onChange={() => setBackupFrequency(opt.value)}
+                    onChange={() => {
+                      setBackupFrequency(opt.value);
+                      saveAutoBackupSettings(autoBackupEnabled, opt.value);
+                    }}
                     className="sr-only"
                   />
                   {opt.label}
@@ -415,12 +557,15 @@ export const BackupModal: React.FC<BackupModalProps> = ({
             <button
               type="button"
               onClick={handleBackupNow}
-              disabled={isBackingUpCloud}
+              disabled={isBackingUpCloud || (hasGoogleAccount && !isGoogleTokenValid)}
               className="w-full py-3.5 bg-[#0B8F68] hover:bg-[#097A59] text-white text-sm font-extrabold rounded-2xl shadow-sm transition-colors cursor-pointer flex items-center justify-center gap-2 disabled:opacity-60"
             >
               {isBackingUpCloud ? <Loader2 className="w-4 h-4 animate-spin" /> : <Cloud className="w-4 h-4" />}
               BACK UP NOW (CLOUD)
             </button>
+            <p className="text-center text-[10px] text-[#55756D]">
+              Last backup: {formatLastBackupTime(lastBackupTime)}
+            </p>
             <input
               type="file"
               ref={fileInputRef}
@@ -431,7 +576,7 @@ export const BackupModal: React.FC<BackupModalProps> = ({
             <button
               type="button"
               onClick={handleRestoreFromCloud}
-              disabled={isRestoringCloud}
+              disabled={isRestoringCloud || (hasGoogleAccount && !isGoogleTokenValid)}
               className="w-full py-3.5 bg-white border-2 border-[#0B8F68] text-[#0B8F68] text-sm font-extrabold rounded-2xl hover:bg-[#E1F3EA] transition-colors cursor-pointer flex items-center justify-center gap-2 disabled:opacity-60"
             >
               {isRestoringCloud ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
