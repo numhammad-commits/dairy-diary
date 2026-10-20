@@ -1,7 +1,8 @@
 import React, { useRef, useState } from 'react';
-import { X, Cloud, Download, Upload, AlertCircle, Mail, CheckCircle2, ChevronDown, ChevronUp } from 'lucide-react';
+import { useGoogleLogin } from '@react-oauth/google';
+import { X, Cloud, Download, Upload, AlertCircle, Mail, CheckCircle2, ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
 import { Contact, LedgerEntry, ExpenseItem } from '../types/dairy';
-import { exportFullDatabase, restoreFullDatabase, loadPersistedSettings } from '../utils/storage';
+import { exportFullDatabase, restoreFullDatabase } from '../utils/storage';
 import { getDeviceTodayDate } from '../utils/formatters';
 
 interface BackupModalProps {
@@ -15,9 +16,61 @@ interface BackupModalProps {
 
 type BackupFrequency = 'daily' | '3days' | 'weekly';
 
-// On-device snapshot used by "BACK UP NOW (CLOUD)" / "RESTORE DATA FROM CLOUD" below —
-// stored in localStorage (not a downloaded file) so no browser download prompt appears.
+// drive.appdata: the hidden per-app folder, invisible in the user's normal Drive UI.
+// userinfo.email/profile: needed to show which account is connected (appdata alone
+// carries no identity info).
+const GOOGLE_DRIVE_SCOPE =
+  'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile';
+const DRIVE_BACKUP_FILENAME_PREFIX = 'dairy-diary-backup';
+
+// On-device snapshot used as a local fallback when Google isn't connected — stored in
+// localStorage (not a downloaded file) so no browser download prompt appears.
 const CLOUD_BACKUP_KEY = 'dairy_diary_cloud_backup_v1';
+
+// Multipart upload straight to the hidden appDataFolder.
+async function uploadBackupToDrive(accessToken: string, filename: string, jsonData: string): Promise<void> {
+  const metadata = { name: filename, parents: ['appDataFolder'] };
+  const boundary = `dairy_diary_boundary_${Date.now()}`;
+  const body =
+    `--${boundary}\r\n` +
+    `Content-Type: application/json; charset=UTF-8\r\n\r\n` +
+    `${JSON.stringify(metadata)}\r\n` +
+    `--${boundary}\r\n` +
+    `Content-Type: application/json\r\n\r\n` +
+    `${jsonData}\r\n` +
+    `--${boundary}--`;
+
+  const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': `multipart/related; boundary=${boundary}`,
+    },
+    body,
+  });
+
+  if (!res.ok) {
+    throw new Error(`Drive upload failed (${res.status})`);
+  }
+}
+
+// Lists files in the hidden appDataFolder and downloads the most recently modified one.
+async function fetchLatestDriveBackup(accessToken: string): Promise<string> {
+  const listRes = await fetch(
+    'https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&fields=files(id,name,modifiedTime)&orderBy=modifiedTime desc&pageSize=1',
+    { headers: { Authorization: `Bearer ${accessToken}` } }
+  );
+  if (!listRes.ok) throw new Error(`Drive list failed (${listRes.status})`);
+  const listData = await listRes.json();
+  const latest = listData.files?.[0];
+  if (!latest) throw new Error('No backups found in Google Drive');
+
+  const fileRes = await fetch(`https://www.googleapis.com/drive/v3/files/${latest.id}?alt=media`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!fileRes.ok) throw new Error(`Drive download failed (${fileRes.status})`);
+  return fileRes.text();
+}
 
 export const BackupModal: React.FC<BackupModalProps> = ({
   contacts,
@@ -32,8 +85,51 @@ export const BackupModal: React.FC<BackupModalProps> = ({
   const [autoBackupEnabled, setAutoBackupEnabled] = useState(false);
   const [backupFrequency, setBackupFrequency] = useState<BackupFrequency>('daily');
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [businessSettings] = useState(() => loadPersistedSettings());
-  const savedEmail = businessSettings.email?.trim();
+
+  // Real Google account connection state (implicit OAuth flow — no backend, so the
+  // access token is short-lived (~1hr) and intentionally not persisted across reloads).
+  const [googleAccessToken, setGoogleAccessToken] = useState<string | null>(null);
+  const [googleTokenExpiresAt, setGoogleTokenExpiresAt] = useState<number | null>(null);
+  const [googleEmail, setGoogleEmail] = useState<string | null>(null);
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [isBackingUpCloud, setIsBackingUpCloud] = useState(false);
+  const [isRestoringCloud, setIsRestoringCloud] = useState(false);
+
+  const isGoogleConnected = Boolean(
+    googleAccessToken && googleTokenExpiresAt && Date.now() < googleTokenExpiresAt
+  );
+
+  const googleLogin = useGoogleLogin({
+    flow: 'implicit',
+    scope: GOOGLE_DRIVE_SCOPE,
+    onSuccess: async (tokenResponse) => {
+      setGoogleAccessToken(tokenResponse.access_token);
+      setGoogleTokenExpiresAt(Date.now() + (tokenResponse.expires_in || 3600) * 1000);
+      try {
+        const res = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+          headers: { Authorization: `Bearer ${tokenResponse.access_token}` },
+        });
+        if (res.ok) {
+          const profile = await res.json();
+          setGoogleEmail(profile.email || null);
+        }
+      } catch (err) {
+        console.error('Failed to fetch Google profile', err);
+      }
+      setIsConnecting(false);
+      setRestoreError(null);
+      if (showToast) showToast('Google account connected');
+    },
+    onError: () => {
+      setIsConnecting(false);
+      if (showToast) showToast('Google sign-in failed or was cancelled');
+    },
+  });
+
+  const handleConnectGoogle = () => {
+    setIsConnecting(true);
+    googleLogin();
+  };
 
   // Real JSON Export (file) — used by the "Advanced / File Operations" section for a
   // portable backup file that survives clearing browser/app data.
@@ -51,43 +147,83 @@ export const BackupModal: React.FC<BackupModalProps> = ({
     if (showToast) showToast('Backup file downloaded successfully');
   };
 
-  // "BACK UP NOW (CLOUD)" — saves straight into localStorage instead of triggering a file
-  // download, so the browser's "download again?" prompt never appears. This is a quick
-  // on-device snapshot only; it does not survive clearing browser/app data, so it is not a
-  // substitute for the real file export above.
-  const handleBackupNow = () => {
+  // "BACK UP NOW (CLOUD)" — uploads to the connected Google account's hidden Drive
+  // appDataFolder. Falls back to an on-device localStorage snapshot if Google isn't
+  // connected, so the button still works without requiring a Google account.
+  const handleBackupNow = async () => {
+    const data = exportFullDatabase();
+
+    if (!isGoogleConnected) {
+      try {
+        localStorage.setItem(CLOUD_BACKUP_KEY, JSON.stringify({ savedAt: new Date().toISOString(), data }));
+        if (showToast) showToast('Connect Google for real cloud backup — saved to this device for now');
+      } catch (err) {
+        console.error('Failed to save backup to localStorage', err);
+        if (showToast) showToast('Failed to save backup');
+      }
+      return;
+    }
+
+    setIsBackingUpCloud(true);
+    setRestoreError(null);
     try {
-      const data = exportFullDatabase();
-      localStorage.setItem(CLOUD_BACKUP_KEY, JSON.stringify({ savedAt: new Date().toISOString(), data }));
-      if (showToast) showToast('Backup saved to device successfully');
+      const filename = `${DRIVE_BACKUP_FILENAME_PREFIX}-${getDeviceTodayDate()}.json`;
+      await uploadBackupToDrive(googleAccessToken!, filename, JSON.stringify(data));
+      if (showToast) showToast('Backup uploaded to Google Drive successfully');
     } catch (err) {
-      console.error('Failed to save backup to localStorage', err);
-      if (showToast) showToast('Failed to save backup');
+      console.error('Google Drive backup failed', err);
+      setRestoreError('Failed to upload backup to Google Drive. Your connection may have expired — try reconnecting.');
+    } finally {
+      setIsBackingUpCloud(false);
     }
   };
 
-  // "RESTORE DATA FROM CLOUD" — restores from the localStorage snapshot saved by
-  // "BACK UP NOW (CLOUD)". Falls back to the file picker if no on-device snapshot exists.
-  const handleRestoreFromCloud = () => {
+  // "RESTORE DATA FROM CLOUD" — downloads the most recent backup from the connected
+  // Google account's Drive appDataFolder. Falls back to the on-device snapshot (or the
+  // file picker) if Google isn't connected.
+  const handleRestoreFromCloud = async () => {
     setRestoreError(null);
-    try {
-      const raw = localStorage.getItem(CLOUD_BACKUP_KEY);
-      if (!raw) {
-        if (showToast) showToast('No on-device backup found — pick a JSON backup file instead');
-        fileInputRef.current?.click();
-        return;
+
+    if (!isGoogleConnected) {
+      try {
+        const raw = localStorage.getItem(CLOUD_BACKUP_KEY);
+        if (!raw) {
+          if (showToast) showToast('Connect Google, or pick a JSON backup file instead');
+          fileInputRef.current?.click();
+          return;
+        }
+        const parsed = JSON.parse(raw);
+        const success = restoreFullDatabase(parsed.data);
+        if (success) {
+          if (showToast) showToast('Database successfully restored from on-device backup!');
+          if (onRestoreSuccess) onRestoreSuccess();
+          onClose();
+        } else {
+          setRestoreError('The saved on-device backup is invalid or corrupted.');
+        }
+      } catch (err) {
+        setRestoreError('Failed to read the on-device backup.');
       }
-      const parsed = JSON.parse(raw);
-      const success = restoreFullDatabase(parsed.data);
+      return;
+    }
+
+    setIsRestoringCloud(true);
+    try {
+      const json = await fetchLatestDriveBackup(googleAccessToken!);
+      const parsed = JSON.parse(json);
+      const success = restoreFullDatabase(parsed);
       if (success) {
-        if (showToast) showToast('Database successfully restored from on-device backup!');
+        if (showToast) showToast('Database successfully restored from Google Drive!');
         if (onRestoreSuccess) onRestoreSuccess();
         onClose();
       } else {
-        setRestoreError('The saved on-device backup is invalid or corrupted.');
+        setRestoreError('The Google Drive backup is invalid or corrupted.');
       }
     } catch (err) {
-      setRestoreError('Failed to read the on-device backup.');
+      console.error('Google Drive restore failed', err);
+      setRestoreError('Failed to restore from Google Drive. Your connection may have expired — try reconnecting.');
+    } finally {
+      setIsRestoringCloud(false);
     }
   };
 
@@ -117,16 +253,6 @@ export const BackupModal: React.FC<BackupModalProps> = ({
       }
     };
     reader.readAsText(file);
-  };
-
-  const handleConnectGoogle = () => {
-    if (showToast) {
-      showToast(
-        savedEmail
-          ? 'Update your email in Settings → Business Profile'
-          : 'Add your email in Settings → Business Profile to connect'
-      );
-    }
   };
 
   const frequencyOptions: { value: BackupFrequency; label: string }[] = [
@@ -165,10 +291,10 @@ export const BackupModal: React.FC<BackupModalProps> = ({
               </div>
               <div className="min-w-0">
                 <h4 className="text-sm font-bold text-[#163B32]">Google Account</h4>
-                {savedEmail ? (
+                {isGoogleConnected && googleEmail ? (
                   <p className="text-xs text-[#0B8F68] font-semibold truncate flex items-center gap-1">
                     <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
-                    <span className="truncate">{savedEmail}</span>
+                    <span className="truncate">{googleEmail}</span>
                   </p>
                 ) : (
                   <p className="text-xs text-[#55756D] truncate">Not Connected</p>
@@ -178,9 +304,11 @@ export const BackupModal: React.FC<BackupModalProps> = ({
             <button
               type="button"
               onClick={handleConnectGoogle}
-              className="px-3.5 py-2 bg-white border border-[#0B8F68] text-[#0B8F68] text-xs font-extrabold rounded-xl hover:bg-[#E1F3EA] transition-colors cursor-pointer shrink-0"
+              disabled={isConnecting}
+              className="px-3.5 py-2 bg-white border border-[#0B8F68] text-[#0B8F68] text-xs font-extrabold rounded-xl hover:bg-[#E1F3EA] transition-colors cursor-pointer shrink-0 disabled:opacity-60 flex items-center gap-1.5"
             >
-              {savedEmail ? 'Change' : 'Connect'}
+              {isConnecting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+              {isGoogleConnected ? 'Change' : 'Connect'}
             </button>
           </div>
 
@@ -231,9 +359,10 @@ export const BackupModal: React.FC<BackupModalProps> = ({
             <button
               type="button"
               onClick={handleBackupNow}
-              className="w-full py-3.5 bg-[#0B8F68] hover:bg-[#097A59] text-white text-sm font-extrabold rounded-2xl shadow-sm transition-colors cursor-pointer flex items-center justify-center gap-2"
+              disabled={isBackingUpCloud}
+              className="w-full py-3.5 bg-[#0B8F68] hover:bg-[#097A59] text-white text-sm font-extrabold rounded-2xl shadow-sm transition-colors cursor-pointer flex items-center justify-center gap-2 disabled:opacity-60"
             >
-              <Cloud className="w-4 h-4" />
+              {isBackingUpCloud ? <Loader2 className="w-4 h-4 animate-spin" /> : <Cloud className="w-4 h-4" />}
               BACK UP NOW (CLOUD)
             </button>
             <input
@@ -246,9 +375,10 @@ export const BackupModal: React.FC<BackupModalProps> = ({
             <button
               type="button"
               onClick={handleRestoreFromCloud}
-              className="w-full py-3.5 bg-white border-2 border-[#0B8F68] text-[#0B8F68] text-sm font-extrabold rounded-2xl hover:bg-[#E1F3EA] transition-colors cursor-pointer flex items-center justify-center gap-2"
+              disabled={isRestoringCloud}
+              className="w-full py-3.5 bg-white border-2 border-[#0B8F68] text-[#0B8F68] text-sm font-extrabold rounded-2xl hover:bg-[#E1F3EA] transition-colors cursor-pointer flex items-center justify-center gap-2 disabled:opacity-60"
             >
-              <Download className="w-4 h-4" />
+              {isRestoringCloud ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
               RESTORE DATA FROM CLOUD
             </button>
             <p className="text-center text-[11px] text-[#55756D]">
