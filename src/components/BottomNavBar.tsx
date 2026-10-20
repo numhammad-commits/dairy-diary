@@ -14,7 +14,7 @@ export const BottomNavBar: React.FC<BottomNavBarProps> = ({
   onOpenAddUser: _onOpenAddUser,
 }) => {
   return (
-    <div className="shrink-0 px-2.5 pb-2.5 pt-1 select-none z-30 bg-transparent">
+    <div className="fixed inset-x-0 bottom-0 mx-auto w-full max-w-md px-2.5 pb-5 pt-1 select-none z-50 bg-transparent">
       <nav className="bg-white rounded-full px-1.5 py-1.5 flex items-center justify-between shadow-lg border border-[#D6E9E1]">
         {/* 1. Home */}
         <button

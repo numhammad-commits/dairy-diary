@@ -839,7 +839,7 @@ export default function App() {
       {/* 2. Main Central Viewport - Scrollable internal area */}
       <div className={`flex-1 min-h-0 flex flex-col bg-transparent ${activeNavTab === 'settings' || activeNavTab === 'calculator' || activeNavTab === 'reminders' || activeNavTab === 'payment_history' || activeNavTab === 'export' || activeNavTab === 'reports' || activeNavTab === 'add_user' ? 'overflow-hidden' : 'overflow-y-auto'}`}>
         {activeNavTab === 'home' && (
-          <div className="flex flex-col" style={{ paddingBottom: 'calc(5rem + env(safe-area-inset-bottom))' }}>
+          <div className="flex flex-col pb-40">
             {/* Financial Summary Card with Integrated Glass Month Selector */}
             <FinancialSummaryCard
               currentMonthKey={currentMonthKey}
@@ -1003,13 +1003,11 @@ export default function App() {
       </div>
 
       {/* 3. Persistent Sticky Bottom Navigation Bar (Permanently pinned to viewport bottom) */}
-      <div style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
-        <BottomNavBar
-          activeTab={activeNavTab}
-          onTabSelect={(tab) => setActiveNavTab(tab)}
-          onOpenAddUser={() => setShowAddUserModal(true)}
-        />
-      </div>
+      <BottomNavBar
+        activeTab={activeNavTab}
+        onTabSelect={(tab) => setActiveNavTab(tab)}
+        onOpenAddUser={() => setShowAddUserModal(true)}
+      />
 
       {/* Toast Notification */}
       {toastMessage && (
