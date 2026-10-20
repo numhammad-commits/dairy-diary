@@ -50,7 +50,12 @@ async function uploadBackupToDrive(accessToken: string, filename: string, jsonDa
   });
 
   if (!res.ok) {
-    throw new Error(`Drive upload failed (${res.status})`);
+    const errBody = await res.text().catch(() => '');
+    const err = new Error(`Drive upload failed (${res.status}): ${errBody.slice(0, 300)}`) as Error & {
+      status?: number;
+    };
+    err.status = res.status;
+    throw err;
   }
 }
 
@@ -60,7 +65,14 @@ async function fetchLatestDriveBackup(accessToken: string): Promise<string> {
     'https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&fields=files(id,name,modifiedTime)&orderBy=modifiedTime desc&pageSize=1',
     { headers: { Authorization: `Bearer ${accessToken}` } }
   );
-  if (!listRes.ok) throw new Error(`Drive list failed (${listRes.status})`);
+  if (!listRes.ok) {
+    const errBody = await listRes.text().catch(() => '');
+    const err = new Error(`Drive list failed (${listRes.status}): ${errBody.slice(0, 300)}`) as Error & {
+      status?: number;
+    };
+    err.status = listRes.status;
+    throw err;
+  }
   const listData = await listRes.json();
   const latest = listData.files?.[0];
   if (!latest) throw new Error('No backups found in Google Drive');
@@ -68,7 +80,14 @@ async function fetchLatestDriveBackup(accessToken: string): Promise<string> {
   const fileRes = await fetch(`https://www.googleapis.com/drive/v3/files/${latest.id}?alt=media`, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
-  if (!fileRes.ok) throw new Error(`Drive download failed (${fileRes.status})`);
+  if (!fileRes.ok) {
+    const errBody = await fileRes.text().catch(() => '');
+    const err = new Error(`Drive download failed (${fileRes.status}): ${errBody.slice(0, 300)}`) as Error & {
+      status?: number;
+    };
+    err.status = fileRes.status;
+    throw err;
+  }
   return fileRes.text();
 }
 
@@ -116,9 +135,29 @@ export const BackupModal: React.FC<BackupModalProps> = ({
       } catch (err) {
         console.error('Failed to fetch Google profile', err);
       }
+
+      // Verify Drive access was actually granted — a misconfigured OAuth consent
+      // screen (drive.appdata not registered as a scope) can let login succeed while
+      // silently not granting Drive access, which would otherwise only surface later
+      // as a confusing failure on upload. Catch it here instead, with a clear reason.
+      let scopeWarning: string | null = null;
+      try {
+        const tokenInfoRes = await fetch(
+          `https://www.googleapis.com/oauth2/v3/tokeninfo?access_token=${tokenResponse.access_token}`
+        );
+        const tokenInfo = await tokenInfoRes.json();
+        const grantedScope: string = tokenInfo.scope || '';
+        if (!grantedScope.includes('drive.appdata')) {
+          scopeWarning =
+            "Google connected, but Drive access wasn't granted. In Google Cloud Console → OAuth consent screen, add the scope '.../auth/drive.appdata' and make sure your account is a test user, then reconnect.";
+        }
+      } catch (err) {
+        console.error('Failed to verify granted Drive scope', err);
+      }
+
       setIsConnecting(false);
-      setRestoreError(null);
-      if (showToast) showToast('Google account connected');
+      setRestoreError(scopeWarning);
+      if (showToast) showToast(scopeWarning ? 'Google connected, but Drive access is missing' : 'Google account connected');
     },
     onError: () => {
       setIsConnecting(false);
@@ -172,7 +211,16 @@ export const BackupModal: React.FC<BackupModalProps> = ({
       if (showToast) showToast('Backup uploaded to Google Drive successfully');
     } catch (err) {
       console.error('Google Drive backup failed', err);
-      setRestoreError('Failed to upload backup to Google Drive. Your connection may have expired — try reconnecting.');
+      const status = (err as { status?: number } | undefined)?.status;
+      if (status === 401) {
+        // Token is actually dead — reflect that in the UI instead of showing a stale "Connected".
+        setGoogleAccessToken(null);
+        setGoogleTokenExpiresAt(null);
+        setGoogleEmail(null);
+        setRestoreError('Your Google connection expired. Tap Connect again, then retry the backup.');
+      } else {
+        setRestoreError(`Failed to upload backup to Google Drive: ${(err as Error)?.message || 'unknown error'}`);
+      }
     } finally {
       setIsBackingUpCloud(false);
     }
@@ -221,7 +269,15 @@ export const BackupModal: React.FC<BackupModalProps> = ({
       }
     } catch (err) {
       console.error('Google Drive restore failed', err);
-      setRestoreError('Failed to restore from Google Drive. Your connection may have expired — try reconnecting.');
+      const status = (err as { status?: number } | undefined)?.status;
+      if (status === 401) {
+        setGoogleAccessToken(null);
+        setGoogleTokenExpiresAt(null);
+        setGoogleEmail(null);
+        setRestoreError('Your Google connection expired. Tap Connect again, then retry the restore.');
+      } else {
+        setRestoreError(`Failed to restore from Google Drive: ${(err as Error)?.message || 'unknown error'}`);
+      }
     } finally {
       setIsRestoringCloud(false);
     }
