@@ -882,19 +882,23 @@ export default function App() {
       <div className={`flex-1 min-h-0 flex flex-col bg-transparent ${activeNavTab === 'settings' || activeNavTab === 'calculator' || activeNavTab === 'reminders' || activeNavTab === 'payment_history' || activeNavTab === 'export' || activeNavTab === 'reports' || activeNavTab === 'add_user' ? 'overflow-hidden' : 'overflow-y-auto'}`}>
         {activeNavTab === 'home' && (
           <div className="flex flex-col pb-40">
-            {/* Financial Summary Card with Integrated Glass Month Selector */}
-            <FinancialSummaryCard
-              currentMonthKey={currentMonthKey}
-              onMonthChange={(newKey) => setCurrentMonthKey(newKey)}
-              liters={currentSummary.totalLiters}
-              amount={currentSummary.totalAmount}
-              due={currentSummary.totalDue}
-              received={currentSummary.totalReceived}
-              totalOutstanding={currentSummary.totalOutstanding}
-              previousBalance={currentSummary.totalPreviousDue}
-              onOpenOutstandingInfo={() => setShowOutstandingModal(true)}
-              onOpenTracker={() => setActiveNavTab('tracker')}
-            />
+            {/* Financial Summary Card — hidden while actively searching so the keyboard-open
+                scroll (handleSearchFocus) has room to bring the customer list into view
+                instead of just filling the screen with these tiles. */}
+            {!searchQuery.trim() && (
+              <FinancialSummaryCard
+                currentMonthKey={currentMonthKey}
+                onMonthChange={(newKey) => setCurrentMonthKey(newKey)}
+                liters={currentSummary.totalLiters}
+                amount={currentSummary.totalAmount}
+                due={currentSummary.totalDue}
+                received={currentSummary.totalReceived}
+                totalOutstanding={currentSummary.totalOutstanding}
+                previousBalance={currentSummary.totalPreviousDue}
+                onOpenOutstandingInfo={() => setShowOutstandingModal(true)}
+                onOpenTracker={() => setActiveNavTab('tracker')}
+              />
+            )}
 
             {/* Search & Filter Controls */}
             <SearchAndFilter
