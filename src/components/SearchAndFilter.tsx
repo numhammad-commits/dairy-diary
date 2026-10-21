@@ -18,6 +18,7 @@ interface SearchAndFilterProps {
   onAddressFilterChange?: (address: string) => void;
   availableAddresses?: AvailableAddressesInfo;
   countLabel: string;
+  onSearchFocus?: () => void;
 }
 
 export const SearchAndFilter: React.FC<SearchAndFilterProps> = ({
@@ -31,6 +32,7 @@ export const SearchAndFilter: React.FC<SearchAndFilterProps> = ({
   onAddressFilterChange,
   availableAddresses,
   countLabel,
+  onSearchFocus,
 }) => {
   const [isOpen, setIsOpen] = useState(
     typeof window !== 'undefined' && window.location.search.includes('dropdown=open')
@@ -70,6 +72,7 @@ export const SearchAndFilter: React.FC<SearchAndFilterProps> = ({
           type="text"
           value={searchQuery}
           onChange={(e) => onSearchChange(e.target.value)}
+          onFocus={onSearchFocus}
           placeholder="Search customer..."
           className="w-full text-sm font-medium text-[#163B32] placeholder-[#55756D]/75 focus:outline-none bg-transparent"
         />

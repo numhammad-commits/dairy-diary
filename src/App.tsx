@@ -244,6 +244,17 @@ export default function App() {
     return () => vv.removeEventListener('resize', setVvh);
   }, []);
 
+  // Android fallback for the same keyboard-overlap problem: Android doesn't reliably
+  // resize the layout (or report it via visualViewport) when its on-screen keyboard
+  // opens, so instead we directly scroll the customer list into view a moment after
+  // the search input is focused, once the keyboard has finished sliding up.
+  const contactListRef = useRef<HTMLDivElement | null>(null);
+  const handleSearchFocus = () => {
+    setTimeout(() => {
+      contactListRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 300);
+  };
+
   // Hardware back button / swipe-back gesture support. Single app-wide
   // popstate listener: pops whichever close-handler is on top of the shared
   // stack (pushed by this effect below, or by ContactDetailModal.tsx /
@@ -897,6 +908,7 @@ export default function App() {
               onAddressFilterChange={setAddressFilter}
               availableAddresses={availableAddresses}
               countLabel={countLabel}
+              onSearchFocus={handleSearchFocus}
             />
 
             {/* Segmented Tabs (All / Buy Milk / Sell Milk) */}
@@ -918,7 +930,7 @@ export default function App() {
             </div>
 
             {/* Dynamic Contact / Ledger List */}
-            <div className="flex-1">
+            <div className="flex-1" ref={contactListRef}>
               <ContactLedgerList
                 contacts={filteredContacts}
                 entries={entries}
