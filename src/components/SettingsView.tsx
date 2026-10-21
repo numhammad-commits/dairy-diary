@@ -233,7 +233,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   ];
 
   return (
-    <div className="flex-1 min-h-0 flex flex-col h-full bg-transparent select-none">
+    <div className="flex-1 min-h-0 flex flex-col h-full bg-transparent select-none pb-24">
       {/* 1. Header Bar - Greenish Theme matching Screen 1 & 2 */}
       <div className="bg-[#1B4332]/90 backdrop-blur-md text-white px-4 py-3 flex items-center gap-3 shrink-0 border-b border-white/10 z-20">
         <button

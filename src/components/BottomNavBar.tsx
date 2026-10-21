@@ -14,8 +14,11 @@ export const BottomNavBar: React.FC<BottomNavBarProps> = ({
   onOpenAddUser: _onOpenAddUser,
 }) => {
   return (
-    <div className="fixed inset-x-0 bottom-0 mx-auto w-full max-w-md px-2.5 pb-5 pt-1 select-none z-50 bg-transparent">
-      <nav className="bg-white rounded-full px-1.5 py-1.5 flex items-center justify-between shadow-lg border border-[#D6E9E1]">
+    <div
+      className="fixed inset-x-0 bottom-0 mx-auto w-full max-w-md select-none z-50 bg-white border-t border-gray-200 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]"
+      style={{ paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom))' }}
+    >
+      <nav className="px-2.5 py-1.5 flex items-center justify-between">
         {/* 1. Home */}
         <button
           onClick={() => onTabSelect('home')}
