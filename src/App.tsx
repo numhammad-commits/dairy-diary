@@ -228,6 +228,22 @@ export default function App() {
     }
   }, [currentMonthKey]);
 
+  // Keep the app's layout height in sync with the real visible viewport (not just the
+  // browser chrome) so the on-screen keyboard doesn't bury content behind it. Neither
+  // Android Chrome nor iOS Safari shrink 100dvh for the keyboard by default, but
+  // window.visualViewport reports the true visible height on both — index.css's
+  // .h-screen rule prefers this value (via --vvh) over 100dvh whenever it's available.
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const setVvh = () => {
+      document.documentElement.style.setProperty('--vvh', `${vv.height}px`);
+    };
+    setVvh();
+    vv.addEventListener('resize', setVvh);
+    return () => vv.removeEventListener('resize', setVvh);
+  }, []);
+
   // Hardware back button / swipe-back gesture support. Single app-wide
   // popstate listener: pops whichever close-handler is on top of the shared
   // stack (pushed by this effect below, or by ContactDetailModal.tsx /

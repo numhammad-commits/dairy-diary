@@ -8,6 +8,9 @@
 .h-screen {
   height: 100vh;
   height: 100dvh;
+  /* Shrinks to the real visible area (set from App.tsx via window.visualViewport) when
+     the on-screen keyboard opens, since 100dvh alone doesn't account for it. */
+  height: var(--vvh, 100dvh);
 }
 
 /* Global typography — apply the Plus Jakarta Sans font already loaded in index.html
