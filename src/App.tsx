@@ -317,7 +317,15 @@ export default function App() {
       return true;
     });
 
-    const summary = getTabSummary(targetContacts, currentMonthKey, entries, paymentRecords);
+    // Area filter: same predicate already used by filteredContacts/countLabel, applied
+    // here too so the summary tiles/outstanding bar match whichever area is selected.
+    const areaFiltered = targetContacts.filter((c) => {
+      if (addressFilter === 'all') return true;
+      if (addressFilter === 'no_address') return !c.area || !c.area.trim();
+      return c.area?.trim() === addressFilter;
+    });
+
+    const summary = getTabSummary(areaFiltered, currentMonthKey, entries, paymentRecords);
 
     return {
       monthKey: currentMonthKey,
@@ -329,7 +337,7 @@ export default function App() {
       totalOutstanding: summary.totalOutstanding,
       totalPreviousDue: summary.totalPreviousDue,
     };
-  }, [currentMonthKey, entries, contacts, activeFilterTab, paymentRecords]);
+  }, [currentMonthKey, entries, contacts, activeFilterTab, addressFilter, paymentRecords]);
 
   // 6. Filter and Sort Contacts Pipeline
   const filteredContacts = useMemo(() => {
