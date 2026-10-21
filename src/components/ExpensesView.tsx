@@ -925,8 +925,8 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
 
       {/* Add / Edit Expense Modal (Matching Reference Screen Structure) */}
       {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/60 backdrop-blur-xs animate-in fade-in select-none">
-          <div 
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-3 bg-black/60 backdrop-blur-xs animate-in fade-in select-none">
+          <div
             className="w-full max-w-md bg-white rounded-3xl shadow-2xl overflow-hidden border border-[#C8E6C9] flex flex-col max-h-[92vh]"
             onClick={(e) => e.stopPropagation()}
           >
@@ -935,16 +935,16 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
               <h3 className="font-extrabold text-base tracking-tight text-white">
                 {editingExpenseId ? 'Edit Farm Expense' : 'Add Farm Expense'}
               </h3>
-              <button 
-                type="button" 
-                onClick={() => setShowModal(false)} 
+              <button
+                type="button"
+                onClick={() => setShowModal(false)}
                 className="p-1 hover:bg-[#144717] rounded-xl text-emerald-100 hover:text-white transition-colors cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleSubmit} className="p-5 space-y-4 overflow-y-auto">
+            <form onSubmit={handleSubmit} className="p-5 pb-32 space-y-4 overflow-y-auto">
               {/* 1. Expense Category */}
               <div className="space-y-1.5">
                 <label className="block text-xs font-extrabold text-slate-800 tracking-tight">
