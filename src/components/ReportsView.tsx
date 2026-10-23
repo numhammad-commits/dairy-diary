@@ -145,18 +145,28 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
     return dateStr.startsWith(selectedYear);
   };
 
+  // Resolve an entry's CURRENT contact role rather than the role snapshotted onto it
+  // when it was created — a contact's role can be edited later, and using the stale
+  // per-entry value would disagree with the Home screen, which always filters by the
+  // contact's current role. Falls back to the entry's own stored role only if the
+  // contact no longer exists (e.g. deleted).
+  const getEntryRole = (entry: LedgerEntry): Contact['role'] => {
+    const contact = contacts.find((c) => c.id === entry.contactId);
+    return contact ? contact.role : entry.contactRole;
+  };
+
   // 5. Period-scoped milk entries (Type + Shift filters apply here — Item Type is a display-layer filter below)
   const periodMilkEntries = useMemo(() => {
     return entries.filter((entry) => {
       if (!dateInPeriod(entry.date)) return false;
-      if (typeFilter === 'buy' && entry.contactRole !== 'seller') return false;
-      if (typeFilter === 'sell' && entry.contactRole !== 'buyer') return false;
+      if (typeFilter === 'buy' && getEntryRole(entry) !== 'seller') return false;
+      if (typeFilter === 'sell' && getEntryRole(entry) !== 'buyer') return false;
       if (shiftFilter === 'morning' && entry.shift !== 'morning') return false;
       if (shiftFilter === 'evening' && entry.shift !== 'evening') return false;
       return true;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [entries, timeFrame, selectedDate, selectedMonth, selectedYear, typeFilter, shiftFilter]);
+  }, [entries, timeFrame, selectedDate, selectedMonth, selectedYear, typeFilter, shiftFilter, contacts]);
 
   // Same date/shift scoping as periodMilkEntries, but never excluded by the
   // Buy/Sell typeFilter tab — Profit & Loss must always see both sides of
@@ -270,16 +280,17 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   // through getCustomerMonthDue (which only ever answers "what does one customer owe").
   const plMetrics = useMemo(() => {
     const revenue = periodMilkEntriesForPL
-      .filter((e) => e.contactRole === 'buyer')
+      .filter((e) => getEntryRole(e) === 'buyer')
       .reduce((sum, e) => sum + e.totalAmount, 0);
     const cost = periodMilkEntriesForPL
-      .filter((e) => e.contactRole === 'seller')
+      .filter((e) => getEntryRole(e) === 'seller')
       .reduce((sum, e) => sum + e.totalAmount, 0);
     const expensesTotal = periodExpenses.reduce((sum, e) => sum + e.amount, 0);
     const netProfit = revenue - cost - expensesTotal;
     const margin = revenue > 0 ? (netProfit / revenue) * 100 : 0;
     return { revenue, cost, expensesTotal, netProfit, margin };
-  }, [periodMilkEntriesForPL, periodExpenses]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [periodMilkEntriesForPL, periodExpenses, contacts]);
 
   // Previous period's Net Profit (yesterday / last month / last year), for the "vs prev" badge.
   const prevPeriodNetProfit = useMemo(() => {
