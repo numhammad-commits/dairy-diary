@@ -1,5 +1,4 @@
 import React from 'react';
-import { SawaaLogo } from './SawaaLogo';
 import type { LedgerEntry } from '../types/dairy';
 
 export interface ReceiptTemplateProps {
@@ -331,11 +330,11 @@ export const ReceiptTemplate = React.forwardRef<HTMLDivElement, ReceiptTemplateP
               style={{ backgroundColor: '#ffffff' }}
               className="w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 overflow-hidden"
             >
-              {logoUrl ? (
-                <img src={logoUrl} alt="Logo" className="w-full h-full object-cover" />
-              ) : (
-                <SawaaLogo variant="icon" size="md" theme="color" />
-              )}
+              <img
+                src={logoUrl || '/icon-192.png'}
+                alt="Logo"
+                className={logoUrl ? 'w-full h-full object-cover' : 'w-8 h-8 object-contain'}
+              />
             </div>
             <h1
               style={{ color: '#ffffff', fontSize: '20px', lineHeight: 1.15 }}
