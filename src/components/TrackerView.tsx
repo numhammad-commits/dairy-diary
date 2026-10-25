@@ -33,6 +33,8 @@ interface TrackerViewProps {
   onBack: () => void;
   onOpenSettings: () => void;
   showToast?: (message: string) => void;
+  pendingRouteContactId?: string | null;
+  onSaveCustomRoute?: (contactId: string, route: { lat: number; lng: number }[]) => void;
 }
 
 export const TrackerView: React.FC<TrackerViewProps> = ({
@@ -41,6 +43,8 @@ export const TrackerView: React.FC<TrackerViewProps> = ({
   onBack,
   onOpenSettings,
   showToast,
+  pendingRouteContactId,
+  onSaveCustomRoute,
 }) => {
   // 1. Tracking State
   const [isTracking, setIsTracking] = useState<boolean>(false);
@@ -57,6 +61,34 @@ export const TrackerView: React.FC<TrackerViewProps> = ({
 
   // Geolocation watch id
   const watchIdRef = useRef<number | null>(null);
+
+  // Screen Wake Lock — keeps the screen from auto-locking while tracking is active and
+  // Dairy Diary stays the foregrounded tab. The API itself auto-releases the lock the
+  // instant the document is hidden (switching apps, screen off via power button), so
+  // re-acquiring on return is handled by the visibilitychange effect further below —
+  // there is no way to make GPS keep recording while the app is fully backgrounded.
+  const wakeLockRef = useRef<any>(null);
+
+  const requestWakeLock = async () => {
+    try {
+      if ('wakeLock' in navigator) {
+        wakeLockRef.current = await (navigator as any).wakeLock.request('screen');
+      } else if (showToast) {
+        showToast("Keep your screen on manually — this device doesn't support auto screen lock.");
+      }
+    } catch (err) {
+      console.warn('Wake Lock request failed:', err);
+    }
+  };
+
+  const releaseWakeLock = async () => {
+    try {
+      if (wakeLockRef.current) await wakeLockRef.current.release();
+    } catch {
+      // ignore
+    }
+    wakeLockRef.current = null;
+  };
 
   // Permission prompt modal (WARNING 5: Ask explanation once clearly)
   const [showPermissionModal, setShowPermissionModal] = useState<boolean>(false);
@@ -112,6 +144,27 @@ export const TrackerView: React.FC<TrackerViewProps> = ({
       if (timerRef.current) clearInterval(timerRef.current);
     };
   }, [isTracking, isPaused]);
+
+  // Pre-link to the customer "Record Custom Route" was tapped for (ContactDetailModal).
+  useEffect(() => {
+    if (pendingRouteContactId) {
+      setFilterMode('customer');
+      setSelectedCustomerId(pendingRouteContactId);
+    }
+  }, [pendingRouteContactId]);
+
+  // Re-acquire the wake lock when returning to the tab (the API auto-releases it
+  // whenever the document goes hidden — that's standard, not a bug to patch around).
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && isTracking && !wakeLockRef.current) {
+        requestWakeLock();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isTracking]);
 
   // Handle GPS start
   const handleStartTrackingClick = () => {
@@ -181,12 +234,13 @@ export const TrackerView: React.FC<TrackerViewProps> = ({
       },
       {
         enableHighAccuracy: true,
-        timeout: 15000,
-        maximumAge: 3000,
+        timeout: 10000,
+        maximumAge: 0,
       }
     );
 
     watchIdRef.current = id;
+    requestWakeLock();
     if (showToast) showToast('Delivery tracking started');
   };
 
@@ -205,6 +259,7 @@ export const TrackerView: React.FC<TrackerViewProps> = ({
       navigator.geolocation.clearWatch(watchIdRef.current);
       watchIdRef.current = null;
     }
+    releaseWakeLock();
 
     setIsTracking(false);
     setIsPaused(false);
@@ -221,11 +276,20 @@ export const TrackerView: React.FC<TrackerViewProps> = ({
         fuelCost: fuelInfo.estimatedCost || undefined,
         pathPoints: currentPoints,
         area: selectedArea !== 'All' ? selectedArea : undefined,
+        contactId: pendingRouteContactId || undefined,
       };
 
       const updatedSessions = [newSession, ...sessions];
       setSessions(updatedSessions);
       savePersistedTrackerSessions(updatedSessions);
+
+      if (pendingRouteContactId && currentPoints.length > 0 && onSaveCustomRoute) {
+        onSaveCustomRoute(
+          pendingRouteContactId,
+          currentPoints.map((p) => ({ lat: p.latitude, lng: p.longitude }))
+        );
+        if (showToast) showToast('Custom route saved for this customer');
+      }
 
       if (showToast) {
         showToast(`Delivery session saved: ${currentSessionKm.toFixed(2)} km`);
@@ -241,7 +305,9 @@ export const TrackerView: React.FC<TrackerViewProps> = ({
       if (watchIdRef.current !== null) {
         navigator.geolocation.clearWatch(watchIdRef.current);
       }
+      releaseWakeLock();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Format seconds to HH:MM:SS

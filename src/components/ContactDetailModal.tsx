@@ -24,7 +24,9 @@ import {
   MessageCircle,
   FileSpreadsheet,
   AlertTriangle,
-  Trash2
+  Trash2,
+  Navigation,
+  Route
 } from 'lucide-react';
 import { Contact, LedgerEntry, ShiftType, MilkType, BusinessSettings, PaymentRecord, ProductType, PRODUCT_TYPE_LABELS } from '../types/dairy';
 import { formatPKR, formatLiters, getMonthDisplay, shiftMonthKey, generateWhatsAppMessage, getDeviceTodayDate, getDeviceCurrentMonthKey, formatDairyReceiptText } from '../utils/formatters';
@@ -76,6 +78,27 @@ function matchesEntryFilter(e: LedgerEntry, filter: EntryFilterOption): boolean 
   return kind === 'product' && e.productType === filter;
 }
 
+// Google Maps' simple "dir" URL scheme isn't meant for hundreds of points, so a raw
+// GPS trail is down-sampled to ~10 evenly-spaced waypoints before building the link.
+function downsampleRoute(route: { lat: number; lng: number }[], maxPoints: number): { lat: number; lng: number }[] {
+  if (route.length <= maxPoints) return route;
+  const step = (route.length - 1) / (maxPoints - 1);
+  const result: { lat: number; lng: number }[] = [];
+  for (let i = 0; i < maxPoints; i++) {
+    result.push(route[Math.round(i * step)]);
+  }
+  return result;
+}
+
+function buildCustomRouteMapsUrl(route: { lat: number; lng: number }[]): string {
+  const sampled = downsampleRoute(route, 10);
+  const origin = sampled[0];
+  const destination = sampled[sampled.length - 1];
+  const waypoints = sampled.slice(1, -1).map((p) => `${p.lat},${p.lng}`).join('|');
+  const base = `https://www.google.com/maps/dir/?api=1&origin=${origin.lat},${origin.lng}&destination=${destination.lat},${destination.lng}`;
+  return waypoints ? `${base}&waypoints=${encodeURIComponent(waypoints)}` : base;
+}
+
 interface ContactDetailModalProps {
   contact: Contact;
   entries: LedgerEntry[];
@@ -95,6 +118,7 @@ interface ContactDetailModalProps {
   onUpdateEntry?: (updatedEntry: LedgerEntry) => void;
   onDeleteEntry?: (entryId: string) => void;
   onDeleteContact?: (contactId: string) => void;
+  onRecordCustomRoute?: (contactId: string) => void;
 }
 
 export const ContactDetailModal: React.FC<ContactDetailModalProps> = ({
@@ -116,6 +140,7 @@ export const ContactDetailModal: React.FC<ContactDetailModalProps> = ({
   onUpdateEntry,
   onDeleteEntry,
   onDeleteContact,
+  onRecordCustomRoute,
 }) => {
   // Canonical contact state for instant reactive updates
   const [activeContact, setActiveContact] = useState<Contact>(contact);
@@ -787,6 +812,48 @@ export const ContactDetailModal: React.FC<ContactDetailModalProps> = ({
               <div className="text-[11px] font-medium text-[#55756D] italic pt-1 border-t border-[#D6E9E1] flex items-center gap-1">
                 <span>↺</span>
                 <span>Previous balance carried forward: {formatPKR(metrics.previousDue)}</span>
+              </div>
+            </div>
+
+            {/* Navigation & Custom Route */}
+            <div className="glass-card rounded-3xl p-3.5 shadow-xs border border-[#D6E9E1] space-y-2">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-[#55756D] block">
+                Navigation
+              </span>
+              <div className="flex items-center gap-2 flex-wrap">
+                {activeContact.latitude != null && activeContact.longitude != null && (
+                  <a
+                    href={`https://www.google.com/maps/dir/?api=1&destination=${activeContact.latitude},${activeContact.longitude}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex-1 min-w-[120px] py-2 px-3 bg-[#E1F3EA] hover:bg-[#d6ecdf] border border-[#D6E9E1] text-[#0B8F68] text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+                  >
+                    <Navigation className="w-3.5 h-3.5" />
+                    <span>Default Map</span>
+                  </a>
+                )}
+                {activeContact.savedRoute && activeContact.savedRoute.length > 0 && (
+                  <a
+                    href={buildCustomRouteMapsUrl(activeContact.savedRoute)}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex-1 min-w-[120px] py-2 px-3 bg-[#0B8F68] hover:bg-[#087A5A] text-white text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-xs"
+                  >
+                    <Navigation className="w-3.5 h-3.5" />
+                    <span>Custom Route</span>
+                  </a>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (onRecordCustomRoute) onRecordCustomRoute(activeContact.id);
+                    onClose();
+                  }}
+                  className="flex-1 min-w-[120px] py-2 px-3 bg-white hover:bg-slate-50 border border-[#D6E9E1] text-[#163B32] text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+                >
+                  <Route className="w-3.5 h-3.5 text-[#0B8F68]" />
+                  <span>Record Custom Route</span>
+                </button>
               </div>
             </div>
 

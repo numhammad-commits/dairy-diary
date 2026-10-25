@@ -49,6 +49,9 @@ export interface Contact {
   inactivatedAt?: string; // YYYY-MM-DD date when status became inactive
   reactivatedAt?: string; // YYYY-MM-DD date when status was reactivated
   lastBilledMonth?: string; // YYYY-MM month key when monthly bill was last sent
+  // Raw GPS trail recorded via Tracker's "Record Custom Route" for this customer,
+  // replayed later as a multi-waypoint Google Maps link (see ContactDetailModal.tsx).
+  savedRoute?: { lat: number; lng: number }[];
 }
 
 export interface LedgerEntry {

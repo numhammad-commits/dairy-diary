@@ -204,6 +204,10 @@ export default function App() {
   const [showAboutModal, setShowAboutModal] = useState<boolean>(false);
   const [showDrawer, setShowDrawer] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  // Set when "Record Custom Route" is tapped for a customer in ContactDetailModal;
+  // read by TrackerView to pre-link the recording session to that customer, and
+  // cleared once the route is actually saved back onto them.
+  const [pendingRouteContactId, setPendingRouteContactId] = useState<string | null>(null);
 
   // Monthly Billing with Permission State (Feature 2)
   const [monthlyBillingState, setMonthlyBillingState] = useState<{
@@ -669,6 +673,23 @@ export default function App() {
     showToast('Customer details updated successfully.');
   };
 
+  // "Record Custom Route" tapped in ContactDetailModal: switch to the Tracker tab,
+  // pre-linked to this customer, closing the modal in the same batch.
+  const handleRecordCustomRoute = (contactId: string) => {
+    setPendingRouteContactId(contactId);
+    setActiveNavTab('tracker');
+    setSelectedContact(null);
+  };
+
+  // Tracker's "Stop & Save" finished a session that was linked to a customer: persist
+  // the raw GPS trail onto them (via the existing contacts-save effect) and unlink.
+  const handleSaveCustomRoute = (contactId: string, route: { lat: number; lng: number }[]) => {
+    setContacts((prev) =>
+      prev.map((c) => (c.id === contactId ? { ...c, savedRoute: route } : c))
+    );
+    setPendingRouteContactId(null);
+  };
+
   const handleSelectContact = (contact: Contact) => {
     setSelectedContact(contact);
   };
@@ -1046,6 +1067,8 @@ export default function App() {
             onBack={() => setActiveNavTab('home')}
             onOpenSettings={() => setActiveNavTab('settings')}
             showToast={showToast}
+            pendingRouteContactId={pendingRouteContactId}
+            onSaveCustomRoute={handleSaveCustomRoute}
           />
         )}
       </div>
@@ -1099,6 +1122,7 @@ export default function App() {
           onUpdateEntry={handleUpdateEntry}
           onDeleteEntry={handleDeleteEntry}
           onDeleteContact={handleDeleteContact}
+          onRecordCustomRoute={handleRecordCustomRoute}
         />
       )}
 
