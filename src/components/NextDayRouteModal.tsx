@@ -80,21 +80,10 @@ export const NextDayRouteModal: React.FC<NextDayRouteModalProps> = ({
 
         const { predicted, reason } = predictDeliveryForDate(c, entries, selectedDate, today);
 
-        // Smart default qty/rate: prefer the most recent past entry made on the SAME
-        // weekday as the selected date (captures e.g. "always orders extra on Sunday"),
-        // falling back to the most recent entry of any day, then the customer's own
-        // fixed/quota defaults.
-        const targetWeekday = new Date(selectedDate + 'T00:00:00').getDay();
-        const pastMilkEntries = entries
-          .filter((e) => e.contactId === c.id && (e.entryType === 'milk' || e.entryType === undefined) && e.date < today)
-          .sort((a, b) => (a.date < b.date ? 1 : -1));
-        const sameWeekdayEntry = pastMilkEntries.find(
-          (e) => new Date(e.date + 'T00:00:00').getDay() === targetWeekday
-        );
-        const bestEntry = sameWeekdayEntry || pastMilkEntries[0];
-
-        const qty = bestEntry?.liters || c.fixedQuantity || c.morningQuotaLiters || 2.0;
-        const rate = bestEntry?.ratePerLiter || c.defaultRate || 240;
+        // Quantity/rate always come straight from the customer's profile, never from a
+        // past entry — editing their default quantity must be reflected instantly.
+        const qty = c.fixedQuantity || c.morningQuotaLiters || 2.0;
+        const rate = c.defaultRate || 240;
         return {
           contact: c,
           qty,
@@ -133,14 +122,10 @@ export const NextDayRouteModal: React.FC<NextDayRouteModalProps> = ({
 
   const checkedPendingRows = pendingRows.filter((r) => selectedIds.has(r.contact.id));
 
-  // Footer total reflects the full expected route for the selected day: everyone
-  // already committed (Already Added) PLUS every currently-checked predicted customer.
-  const totalLiters =
-    alreadyAddedRows.reduce((sum, r) => sum + r.qty, 0) +
-    checkedPendingRows.reduce((sum, r) => sum + r.qty, 0);
-  const totalAmount =
-    alreadyAddedRows.reduce((sum, r) => sum + r.amount, 0) +
-    checkedPendingRows.reduce((sum, r) => sum + r.amount, 0);
+  // Footer total reflects ONLY confirmed deliveries (Already Added) — what you actually
+  // need to prepare milk for. Pending rows are just suggestions until confirmed.
+  const totalLiters = alreadyAddedRows.reduce((sum, r) => sum + r.qty, 0);
+  const totalAmount = alreadyAddedRows.reduce((sum, r) => sum + r.amount, 0);
 
   const handleConfirm = () => {
     if (checkedPendingRows.length === 0) return;
