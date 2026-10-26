@@ -158,6 +158,36 @@ export const ReportPeriodBottomSheet: React.FC<ReportPeriodBottomSheetProps> = (
     });
   };
 
+  // Carryover due for this customer from everything strictly BEFORE `cutoffDate` (a plain
+  // YYYY-MM-DD comparison — works for an arbitrary custom-range start, not just month
+  // boundaries). Mirrors getCustomerMonthDue's own "previousDue" math in calculations.ts
+  // (same de-dupe signature, same Math.max(0, ...) floor) but anchored by date instead of
+  // month key, since this file isn't in that function's write scope.
+  const computeDueBeforeDate = (cutoffDate: string): number => {
+    const priorEntries = entries.filter((e) => e.contactId === contact.id && e.date < cutoffDate);
+
+    const priorPayments = (paymentRecords || []).filter((p) => {
+      if (p.contactId !== contact.id && p.contactName !== contact.name) return false;
+      const effectiveDate = p.billingMonth ? `${p.billingMonth}-01` : p.date;
+      return effectiveDate < cutoffDate;
+    });
+
+    const seen = new Set<string>();
+    const uniquePriorPayments = priorPayments.filter((p) => {
+      const sig = `${p.id}_${p.date}_${p.timestamp || ''}_${p.amount}_${p.billingMonth || ''}`;
+      if (seen.has(sig)) return false;
+      seen.add(sig);
+      return true;
+    });
+
+    const priorAmount = priorEntries.reduce((sum, e) => sum + e.totalAmount, 0);
+    const priorReceived =
+      priorEntries.reduce((sum, e) => sum + (e.receivedAmount || 0), 0) +
+      uniquePriorPayments.reduce((sum, p) => sum + (p.amount || 0), 0);
+
+    return Math.max(0, priorAmount - priorReceived);
+  };
+
   // Generate Report Action
   const handleGenerate = () => {
     setErrorMessage(null);
@@ -187,28 +217,32 @@ export const ReportPeriodBottomSheet: React.FC<ReportPeriodBottomSheetProps> = (
       if (selectedPeriod === 'all_time') periodTitle = 'All Time History';
       if (selectedPeriod === 'custom_range') periodTitle = `${customStartDate} to ${customEndDate}`;
 
-      // Carryover previous due, computed dynamically from entries & payments. This call also
-      // supplies the exact selected_month totals below, so it's the only call site needed.
-      const fin = getCustomerMonthDue(contact, currentMonthKey, entries, paymentRecords || []);
-      const previousDue = fin.previousDue;
-
       // Financial calculations preserving historical entry rates.
       // For "selected_month" (the common case), reuse getCustomerMonthDue's own totals so this
       // report can never drift from Home / ContactDetail / MonthlyBilling for the same customer
       // + month. The other periods span multiple months, which getCustomerMonthDue doesn't
       // support, so they're computed from the period-filtered entries and payments using the
       // same billingMonth-aware rule and the same Math.max(0, ...) floor.
+      //
+      // previousDue MUST be anchored to the selected period's own start date, never to
+      // today's real-world calendar month — otherwise a period that starts before the
+      // current month (last_3_months / all_time / an older custom_range) double-counts:
+      // the carryover months would be summed once inside periodDue (they're inside the
+      // selected range) and a second time inside previousDue (they're also before "today").
 
       let totalMilk: number;
       let totalAmount: number;
       let totalReceived: number;
       let periodDue: number;
+      let previousDue: number;
 
       if (selectedPeriod === 'selected_month') {
+        const fin = getCustomerMonthDue(contact, currentMonthKey, entries, paymentRecords || []);
         totalMilk = fin.liters;
         totalAmount = fin.amount;
         totalReceived = fin.received;
         periodDue = fin.due;
+        previousDue = fin.previousDue;
       } else {
         const periodPayments = filterPaymentsForPeriod();
         const paymentsReceived = periodPayments.reduce((sum, p) => sum + (p.amount || 0), 0);
@@ -217,6 +251,14 @@ export const ReportPeriodBottomSheet: React.FC<ReportPeriodBottomSheetProps> = (
         totalAmount = filtered.reduce((sum, e) => sum + e.totalAmount, 0);
         totalReceived = filtered.reduce((sum, e) => sum + e.receivedAmount, 0) + paymentsReceived;
         periodDue = Math.max(0, totalAmount - totalReceived);
+
+        if (selectedPeriod === 'all_time') {
+          // Nothing exists before "all time" — there is no carryover left to add.
+          previousDue = 0;
+        } else {
+          const periodStartDate = selectedPeriod === 'last_3_months' ? last3MonthsRange.startStr : customStartDate;
+          previousDue = computeDueBeforeDate(periodStartDate);
+        }
       }
 
       const totalOutstanding = Math.max(0, periodDue + previousDue);

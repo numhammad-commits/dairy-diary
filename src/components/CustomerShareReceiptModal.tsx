@@ -172,7 +172,7 @@ export const CustomerShareReceiptModal: React.FC<CustomerShareReceiptModalProps>
         `📅 *Date:* ${pDate}\n` +
         `💳 *Method:* ${pMethod}\n` +
         `✅ *Amount Received:* ${formatPKR(amt)}\n` +
-        `⚠️ *Remaining Due:* ${formatPKR(metrics.totalOutstanding)}\n` +
+        `⚠️ *Remaining Due:* ${formatPKR(metrics.due + metrics.previousDue)}\n` +
         `-------------------------\n` +
         `Thank you for your business!\n` +
         `_${businessName} Dairy Diary_`;
@@ -198,7 +198,11 @@ export const CustomerShareReceiptModal: React.FC<CustomerShareReceiptModalProps>
         totalReceived: metrics.received,
         periodDue: metrics.due,
         previousDue: metrics.previousDue,
-        totalOutstanding: metrics.totalOutstanding,
+        // Bill documents must show the FULL amount owed (current month + carryover),
+        // unlike the Home/ContactDetail "Outstanding" badge which is current-month-only
+        // by design (Bug Fix #2) — metrics.totalOutstanding is that current-month-only
+        // figure, so it's deliberately not reused here.
+        totalOutstanding: metrics.due + metrics.previousDue,
       },
       false,
       templateVariant
@@ -485,11 +489,13 @@ export const CustomerShareReceiptModal: React.FC<CustomerShareReceiptModalProps>
                     <span className="font-black text-[#E57373]">+{formatPKR(metrics.previousDue)}</span>
                   </div>
 
-                  {/* Highlighted Total Outstanding Row */}
+                  {/* Highlighted Total Outstanding Row — current month + previous carryover
+                      combined, matching the shared receipt image/PDF below (not the
+                      current-month-only Outstanding badge used on Home/ContactDetail). */}
                   <div className="p-3 bg-[#E8F5E9] rounded-xl border border-[#C8E6C9] flex items-center justify-between mt-3">
                     <span className="font-black text-xs text-[#1B5E20]">Total Outstanding Due</span>
                     <span className="font-black text-base text-[#E57373]">
-                      {formatPKR(metrics.totalOutstanding)}
+                      {formatPKR(metrics.due + metrics.previousDue)}
                     </span>
                   </div>
                 </div>
@@ -528,7 +534,7 @@ export const CustomerShareReceiptModal: React.FC<CustomerShareReceiptModalProps>
                       <div className="flex items-center justify-between py-1.5 px-1 mt-2">
                         <span className="text-[#757575] font-semibold">Remaining Balance</span>
                         <span className="font-black text-[#E57373]">
-                          {formatPKR(metrics.totalOutstanding)}
+                          {formatPKR(metrics.due + metrics.previousDue)}
                         </span>
                       </div>
                     </>
@@ -655,7 +661,10 @@ export const CustomerShareReceiptModal: React.FC<CustomerShareReceiptModalProps>
             missedDaysLabel={dayStats.missedDaysLabel}
             totalAmount={metrics.amount}
             totalReceived={metrics.received}
-            totalOutstanding={metrics.totalOutstanding}
+            // Same reasoning as the PDF financials above: the receipt card must show
+            // current month + previous carryover combined, not the current-month-only
+            // Outstanding figure.
+            totalOutstanding={metrics.due + metrics.previousDue}
             currencySymbol={businessSettings?.currencySymbol}
           />
         </div>
