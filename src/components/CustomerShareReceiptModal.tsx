@@ -647,6 +647,10 @@ export const CustomerShareReceiptModal: React.FC<CustomerShareReceiptModalProps>
           <ReceiptTemplate
             ref={receiptRef}
             variant={templateVariant}
+            // Red for the Due Receipt tab (money owed), green for Payment Receipt
+            // (money received) — see WARNING 3 in the color-coding task: only this
+            // receipt image's own header/total box change, not the app theme.
+            receiptType={activeTab}
             entries={monthEntriesForReceipt}
             businessName={businessName}
             businessPhone={businessSettings?.phone}

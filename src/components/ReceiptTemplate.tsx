@@ -3,6 +3,10 @@ import type { LedgerEntry } from '../types/dairy';
 
 export interface ReceiptTemplateProps {
   variant?: 'modern' | 'thermal' | 'ledger';
+  // Visual color code for the Modern variant's header + total box — 'due' (red, money
+  // owed) vs 'payment' (green, money received). Defaults to 'due' so existing callers
+  // (e.g. the Settings live preview) keep their current green-header look unchanged.
+  receiptType?: 'due' | 'payment';
   entries?: LedgerEntry[]; // used by the ledger variant for the real per-day table
   businessName: string;
   businessPhone?: string;
@@ -44,6 +48,7 @@ export const ReceiptTemplate = React.forwardRef<HTMLDivElement, ReceiptTemplateP
   (
     {
       variant = 'modern',
+      receiptType = 'due',
       entries,
       businessName,
       businessPhone,
@@ -323,8 +328,12 @@ export const ReceiptTemplate = React.forwardRef<HTMLDivElement, ReceiptTemplateP
         }}
         className="rounded-3xl overflow-hidden"
       >
-        {/* 1. Header: app's dark green theme, real logo, business name, phone/address */}
-        <div style={{ backgroundColor: '#006B52' }} className="px-5 pt-5 pb-4">
+        {/* 1. Header: RED for a Due statement (money owed), GREEN for a Payment receipt
+            (money received) — real logo, business name, phone/address unchanged. */}
+        <div
+          style={{ backgroundColor: receiptType === 'due' ? '#D32F2F' : '#006B52' }}
+          className="px-5 pt-5 pb-4"
+        >
           <div className="flex items-start gap-3">
             <div
               style={{ backgroundColor: '#ffffff' }}
@@ -431,22 +440,36 @@ export const ReceiptTemplate = React.forwardRef<HTMLDivElement, ReceiptTemplateP
           </div>
         </div>
 
-        {/* 5. Balance box: green if all clear, red if due */}
+        {/* 5. Total box: a Due statement highlights the outstanding balance (light red
+            while anything's owed, green once fully cleared); a Payment receipt always
+            highlights the amount received, in green. */}
         <div className="px-5 pt-3 pb-5">
-          <div
-            style={{ backgroundColor: isAllClear ? '#E1F3EA' : '#fff1f2' }}
-            className="rounded-2xl px-4 py-3 flex items-center justify-between"
-          >
-            <span
-              style={{ color: isAllClear ? '#0B8F68' : '#e11d48', fontSize: '12px', fontWeight: 900 }}
-              className="uppercase tracking-wide"
+          {receiptType === 'due' ? (
+            <div
+              style={{ backgroundColor: isAllClear ? '#E1F3EA' : '#fff1f2' }}
+              className="rounded-2xl px-4 py-3 flex items-center justify-between"
             >
-              {isAllClear ? 'Balance (All Clear)' : 'Balance Due'}
-            </span>
-            <span style={{ color: isAllClear ? '#0B8F68' : '#e11d48', fontSize: '16px', fontWeight: 900 }}>
-              {fmt(totalOutstanding)}
-            </span>
-          </div>
+              <span
+                style={{ color: isAllClear ? '#0B8F68' : '#D32F2F', fontSize: '12px', fontWeight: 900 }}
+                className="uppercase tracking-wide"
+              >
+                {isAllClear ? 'Balance (All Clear)' : 'Balance Due'}
+              </span>
+              <span style={{ color: isAllClear ? '#0B8F68' : '#D32F2F', fontSize: '16px', fontWeight: 900 }}>
+                {fmt(totalOutstanding)}
+              </span>
+            </div>
+          ) : (
+            <div
+              style={{ backgroundColor: '#E1F3EA' }}
+              className="rounded-2xl px-4 py-3 flex items-center justify-between"
+            >
+              <span style={{ color: '#0B8F68', fontSize: '12px', fontWeight: 900 }} className="uppercase tracking-wide">
+                Total Received
+              </span>
+              <span style={{ color: '#0B8F68', fontSize: '16px', fontWeight: 900 }}>{fmt(totalReceived)}</span>
+            </div>
+          )}
         </div>
 
         {/* 6. Footer */}
