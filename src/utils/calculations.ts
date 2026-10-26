@@ -133,3 +133,114 @@ export function getTabSummary(
     totalPreviousDue,
   };
 }
+
+export type DeliveryPredictionReason = 'daily' | 'weekday' | 'cadence' | 'new' | 'irregular';
+
+export interface DeliveryPrediction {
+  predicted: boolean;
+  reason: DeliveryPredictionReason;
+}
+
+const ROUTE_HISTORY_WINDOW_DAYS = 30;
+
+function parseLocalDate(dateStr: string): Date {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return new Date(y, m - 1, d);
+}
+
+function daysBetween(a: Date, b: Date): number {
+  return Math.round((b.getTime() - a.getTime()) / 86400000);
+}
+
+/**
+ * Smart Next-Day/5-Day Route prediction: does this customer usually take milk on
+ * `targetDate`? Looks at the 30 days of milk entries ending the day before `today`
+ * (future days obviously have none yet, so the window is always anchored to "today").
+ *
+ * Checked in order:
+ * 1. Too little history (<5 milk entries ever) -> predict YES ("new" customer, safer to
+ *    show than silently drop from the route).
+ * 2. Delivers on >=85% of days in the window -> predict YES every day ("daily"),
+ *    regardless of weekday noise (Warning 4: daily customers must never be hidden).
+ * 3. That weekday occurred >=2 times in the window and was hit >=60% of the time ->
+ *    predict YES ("weekday" pattern, e.g. only Mon/Thu).
+ * 4. Otherwise, for "every N days" customers with no single clean weekday: predict YES
+ *    if targetDate lands within 1 day of the next expected multiple of their average
+ *    delivery gap ("cadence").
+ * 5. Otherwise predict NO ("irregular") — still shown in the UI with an unchecked,
+ *    overridable checkbox (Warning 5).
+ */
+export function predictDeliveryForDate(
+  contact: Contact,
+  entries: LedgerEntry[],
+  targetDate: string,
+  today: string
+): DeliveryPrediction {
+  const todayD = parseLocalDate(today);
+  const targetD = parseLocalDate(targetDate);
+  const targetWeekday = targetD.getDay();
+
+  const windowStart = new Date(todayD);
+  windowStart.setDate(windowStart.getDate() - ROUTE_HISTORY_WINDOW_DAYS);
+
+  // Only real milk deliveries count — product entries (Yogurt, Ghee, etc.) always report
+  // liters: 0 and aren't part of the milk route.
+  const milkEntries = entries.filter(
+    (e) => e.contactId === contact.id && (e.entryType === 'milk' || e.entryType === undefined)
+  );
+
+  if (milkEntries.length < 5) {
+    return { predicted: true, reason: 'new' };
+  }
+
+  const windowEntries = milkEntries.filter((e) => {
+    const d = parseLocalDate(e.date);
+    return d >= windowStart && d < todayD;
+  });
+
+  // Distinct delivery DATES (a contact can have both a morning and evening entry on one
+  // date — that still only counts as one delivery day).
+  const deliveryDates = Array.from(new Set(windowEntries.map((e) => e.date))).sort();
+
+  const frequencyRatio = deliveryDates.length / ROUTE_HISTORY_WINDOW_DAYS;
+  if (frequencyRatio >= 0.85) {
+    return { predicted: true, reason: 'daily' };
+  }
+
+  const weekdayOccurrences = new Array(7).fill(0);
+  const weekdayHits = new Array(7).fill(0);
+  for (let i = 1; i <= ROUTE_HISTORY_WINDOW_DAYS; i++) {
+    const d = new Date(todayD);
+    d.setDate(d.getDate() - i);
+    weekdayOccurrences[d.getDay()]++;
+  }
+  deliveryDates.forEach((dateStr) => {
+    weekdayHits[parseLocalDate(dateStr).getDay()]++;
+  });
+
+  const isWeekdayPattern =
+    weekdayOccurrences[targetWeekday] >= 2 &&
+    weekdayHits[targetWeekday] / weekdayOccurrences[targetWeekday] >= 0.6;
+  if (isWeekdayPattern) {
+    return { predicted: true, reason: 'weekday' };
+  }
+
+  if (deliveryDates.length >= 2 && frequencyRatio >= 0.25) {
+    const gaps: number[] = [];
+    for (let i = 1; i < deliveryDates.length; i++) {
+      gaps.push(daysBetween(parseLocalDate(deliveryDates[i - 1]), parseLocalDate(deliveryDates[i])));
+    }
+    const avgGap = Math.round(gaps.reduce((s, g) => s + g, 0) / gaps.length);
+    if (avgGap >= 2) {
+      const lastDeliveryDate = parseLocalDate(deliveryDates[deliveryDates.length - 1]);
+      const daysSinceLast = daysBetween(lastDeliveryDate, targetD);
+      const remainder = ((daysSinceLast % avgGap) + avgGap) % avgGap;
+      const distanceToMultiple = Math.min(remainder, avgGap - remainder);
+      if (distanceToMultiple <= 1) {
+        return { predicted: true, reason: 'cadence' };
+      }
+    }
+  }
+
+  return { predicted: false, reason: 'irregular' };
+}

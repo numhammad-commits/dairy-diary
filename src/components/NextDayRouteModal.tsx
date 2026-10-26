@@ -1,7 +1,8 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { X, Route, Check, Users } from 'lucide-react';
 import { Contact, LedgerEntry, MilkType } from '../types/dairy';
 import { getDeviceTodayDate, shiftDateString, formatPKR, formatLiters } from '../utils/formatters';
+import { predictDeliveryForDate, DeliveryPredictionReason } from '../utils/calculations';
 
 interface NextDayRouteModalProps {
   contacts: Contact[];
@@ -12,11 +13,28 @@ interface NextDayRouteModalProps {
 
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-function formatRouteDateLabel(dateStr: string): string {
+const DATE_OFFSETS = [
+  { offset: 0, label: 'Today' },
+  { offset: 1, label: 'Tomorrow' },
+  { offset: 2, label: '+2 Days' },
+  { offset: 3, label: '+3 Days' },
+  { offset: 4, label: '+4 Days' },
+  { offset: 5, label: '+5 Days' },
+];
+
+const REASON_TAGS: Record<DeliveryPredictionReason, string> = {
+  daily: 'Daily customer',
+  weekday: 'Usual day',
+  cadence: 'Usual cadence',
+  new: 'New customer',
+  irregular: 'Not usual — tap to add',
+};
+
+function formatRouteDateLabel(offsetLabel: string, dateStr: string): string {
   const [, monthStr, dayStr] = dateStr.split('-');
   const monthIdx = parseInt(monthStr, 10) - 1;
   const day = parseInt(dayStr, 10);
-  return `Tomorrow, ${MONTH_NAMES[monthIdx] || ''} ${day}`;
+  return `${offsetLabel}, ${MONTH_NAMES[monthIdx] || ''} ${day}`;
 }
 
 export const NextDayRouteModal: React.FC<NextDayRouteModalProps> = ({
@@ -25,7 +43,11 @@ export const NextDayRouteModal: React.FC<NextDayRouteModalProps> = ({
   onClose,
   onConfirm,
 }) => {
-  const tomorrowDate = useMemo(() => shiftDateString(getDeviceTodayDate(), 1), []);
+  const today = useMemo(() => getDeviceTodayDate(), []);
+  // Defaults to "Tomorrow" since that's the primary next-day-prep use case; the other
+  // days are available via the date selector below.
+  const [selectedOffset, setSelectedOffset] = useState<number>(1);
+  const selectedDate = useMemo(() => shiftDateString(today, selectedOffset), [today, selectedOffset]);
 
   // Only active buyer (customer) contacts are eligible for a delivery route —
   // sellers are farmers the business buys from, not delivery customers.
@@ -38,11 +60,11 @@ export const NextDayRouteModal: React.FC<NextDayRouteModalProps> = ({
   const rows = useMemo(
     () =>
       eligibleContacts.map((c) => {
-        // If a real entry already exists for tomorrow, show its ACTUAL saved
+        // If a real entry already exists for the selected date, show its ACTUAL saved
         // quantity/rate/amount — not the customer's default — since the two can
         // differ (e.g. a one-off larger order).
         const matchingEntry = entries.find(
-          (e) => e.contactId === c.id && e.date === tomorrowDate && e.shift === 'morning'
+          (e) => e.contactId === c.id && e.date === selectedDate && e.shift === 'morning'
         );
         if (matchingEntry) {
           return {
@@ -51,21 +73,54 @@ export const NextDayRouteModal: React.FC<NextDayRouteModalProps> = ({
             rate: matchingEntry.ratePerLiter,
             amount: matchingEntry.totalAmount,
             alreadyExists: true,
+            predicted: true,
+            reason: 'irregular' as DeliveryPredictionReason, // unused for Already Added rows
           };
         }
-        const qty = c.fixedQuantity || c.morningQuotaLiters || 2.0;
-        const rate = c.defaultRate || 240;
-        return { contact: c, qty, rate, amount: Math.round(qty * rate), alreadyExists: false };
+
+        const { predicted, reason } = predictDeliveryForDate(c, entries, selectedDate, today);
+
+        // Smart default qty/rate: prefer the most recent past entry made on the SAME
+        // weekday as the selected date (captures e.g. "always orders extra on Sunday"),
+        // falling back to the most recent entry of any day, then the customer's own
+        // fixed/quota defaults.
+        const targetWeekday = new Date(selectedDate + 'T00:00:00').getDay();
+        const pastMilkEntries = entries
+          .filter((e) => e.contactId === c.id && (e.entryType === 'milk' || e.entryType === undefined) && e.date < today)
+          .sort((a, b) => (a.date < b.date ? 1 : -1));
+        const sameWeekdayEntry = pastMilkEntries.find(
+          (e) => new Date(e.date + 'T00:00:00').getDay() === targetWeekday
+        );
+        const bestEntry = sameWeekdayEntry || pastMilkEntries[0];
+
+        const qty = bestEntry?.liters || c.fixedQuantity || c.morningQuotaLiters || 2.0;
+        const rate = bestEntry?.ratePerLiter || c.defaultRate || 240;
+        return {
+          contact: c,
+          qty,
+          rate,
+          amount: Math.round(qty * rate),
+          alreadyExists: false,
+          predicted,
+          reason,
+        };
       }),
-    [eligibleContacts, entries, tomorrowDate]
+    [eligibleContacts, entries, selectedDate, today]
   );
 
   const pendingRows = rows.filter((r) => !r.alreadyExists);
   const alreadyAddedRows = rows.filter((r) => r.alreadyExists);
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(
-    () => new Set(pendingRows.map((r) => r.contact.id))
+    () => new Set(pendingRows.filter((r) => r.predicted).map((r) => r.contact.id))
   );
+
+  // Re-derive the default checked set (predicted customers) whenever the selected date
+  // changes, while still letting the user override any individual row (Warning 5).
+  useEffect(() => {
+    setSelectedIds(new Set(pendingRows.filter((r) => r.predicted).map((r) => r.contact.id)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedDate]);
 
   const toggleContact = (contactId: string) => {
     setSelectedIds((prev) => {
@@ -78,11 +133,14 @@ export const NextDayRouteModal: React.FC<NextDayRouteModalProps> = ({
 
   const checkedPendingRows = pendingRows.filter((r) => selectedIds.has(r.contact.id));
 
-  // Footer total reflects ONLY what's already committed for tomorrow (Already Added).
-  // Pending customers are shown with checkboxes so they can still be added via Confirm,
-  // but they're intentionally excluded from this total per the latest requirement.
-  const totalLiters = alreadyAddedRows.reduce((sum, r) => sum + r.qty, 0);
-  const totalAmount = alreadyAddedRows.reduce((sum, r) => sum + r.amount, 0);
+  // Footer total reflects the full expected route for the selected day: everyone
+  // already committed (Already Added) PLUS every currently-checked predicted customer.
+  const totalLiters =
+    alreadyAddedRows.reduce((sum, r) => sum + r.qty, 0) +
+    checkedPendingRows.reduce((sum, r) => sum + r.qty, 0);
+  const totalAmount =
+    alreadyAddedRows.reduce((sum, r) => sum + r.amount, 0) +
+    checkedPendingRows.reduce((sum, r) => sum + r.amount, 0);
 
   const handleConfirm = () => {
     if (checkedPendingRows.length === 0) return;
@@ -91,7 +149,7 @@ export const NextDayRouteModal: React.FC<NextDayRouteModalProps> = ({
       contactId: r.contact.id,
       contactName: r.contact.name,
       contactRole: r.contact.role,
-      date: tomorrowDate,
+      date: selectedDate,
       timestamp: '07:00 AM',
       shift: 'morning',
       milkType: (r.contact.milkTypePref || 'buffalo') as MilkType,
@@ -118,9 +176,9 @@ export const NextDayRouteModal: React.FC<NextDayRouteModalProps> = ({
           <div className="flex items-center gap-2.5 min-w-0">
             <Route className="w-5 h-5 text-white shrink-0" />
             <div className="min-w-0">
-              <h2 className="text-sm font-black tracking-tight truncate">Next Day Route</h2>
+              <h2 className="text-sm font-black tracking-tight truncate">Route Forecast</h2>
               <p className="text-[11px] text-white/70 font-medium truncate">
-                {formatRouteDateLabel(tomorrowDate)}
+                {formatRouteDateLabel(DATE_OFFSETS[selectedOffset].label, selectedDate)}
               </p>
             </div>
           </div>
@@ -132,6 +190,24 @@ export const NextDayRouteModal: React.FC<NextDayRouteModalProps> = ({
           >
             <X className="w-4.5 h-4.5" />
           </button>
+        </div>
+
+        {/* Date Selector */}
+        <div className="flex gap-1.5 px-4 py-2.5 overflow-x-auto border-b border-[#D6E9E1] bg-white/60 shrink-0">
+          {DATE_OFFSETS.map((d) => (
+            <button
+              key={d.offset}
+              type="button"
+              onClick={() => setSelectedOffset(d.offset)}
+              className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+                selectedOffset === d.offset
+                  ? 'bg-[#0B8F68] text-white'
+                  : 'bg-white text-[#55756D] border border-[#D6E9E1] hover:border-[#0B8F68]/40'
+              }`}
+            >
+              {d.label}
+            </button>
+          ))}
         </div>
 
         {/* Customer List: grouped into Pending / Already Added */}
@@ -169,8 +245,11 @@ export const NextDayRouteModal: React.FC<NextDayRouteModalProps> = ({
                           </div>
                           <div className="min-w-0">
                             <p className="text-sm font-bold text-[#163B32] truncate">{r.contact.name}</p>
-                            <p className="text-[11px] text-[#55756D] font-medium">
-                              {formatLiters(r.qty)} · Rs{r.rate.toFixed(0)}/L
+                            <p className="text-[11px] text-[#55756D] font-medium truncate">
+                              {formatLiters(r.qty)} · Rs{r.rate.toFixed(0)}/L ·{' '}
+                              <span className={r.predicted ? 'text-[#0B8F68]' : 'text-amber-600'}>
+                                {REASON_TAGS[r.reason]}
+                              </span>
                             </p>
                           </div>
                         </div>
@@ -236,7 +315,7 @@ export const NextDayRouteModal: React.FC<NextDayRouteModalProps> = ({
             disabled={checkedPendingRows.length === 0}
             className="w-full py-3.5 rounded-2xl bg-[#0B8F68] hover:bg-[#087A5A] active:bg-[#066B4D] disabled:opacity-40 disabled:cursor-not-allowed text-white font-black text-sm tracking-tight transition-all cursor-pointer shadow-sm"
           >
-            Confirm Deliveries for Tomorrow
+            Confirm Deliveries for {DATE_OFFSETS[selectedOffset].label}
           </button>
         </div>
       </div>
