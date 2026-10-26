@@ -44,6 +44,46 @@ function drawPinIcon(doc: jsPDF, x: number, y: number, color: [number, number, n
 }
 
 // =========================================================================
+// Stat-box badge icons for the premium A4 invoice's 4 summary cards — same
+// hand-drawn-shape technique as the phone/pin icons above (jsPDF's built-in
+// fonts have no emoji glyphs), each centered in a small colored circle badge.
+// =========================================================================
+
+function drawDropletBadge(doc: jsPDF, cx: number, cy: number, r: number, bg: [number, number, number]) {
+  doc.setFillColor(...bg);
+  doc.circle(cx, cy, r, 'F');
+  doc.setFillColor(255, 255, 255);
+  doc.circle(cx, cy + r * 0.25, r * 0.4, 'F');
+  doc.triangle(cx - r * 0.4, cy + r * 0.1, cx + r * 0.4, cy + r * 0.1, cx, cy - r * 0.45, 'F');
+}
+
+function drawCoinBadge(doc: jsPDF, cx: number, cy: number, r: number, bg: [number, number, number]) {
+  doc.setFillColor(...bg);
+  doc.circle(cx, cy, r, 'F');
+  doc.setDrawColor(255, 255, 255);
+  doc.setLineWidth(0.4);
+  doc.circle(cx, cy, r * 0.55, 'S');
+  doc.line(cx, cy - r * 0.3, cx, cy + r * 0.3);
+}
+
+function drawCheckBadge(doc: jsPDF, cx: number, cy: number, r: number, bg: [number, number, number]) {
+  doc.setFillColor(...bg);
+  doc.circle(cx, cy, r, 'F');
+  doc.setDrawColor(255, 255, 255);
+  doc.setLineWidth(0.6);
+  doc.line(cx - r * 0.45, cy, cx - r * 0.1, cy + r * 0.4);
+  doc.line(cx - r * 0.1, cy + r * 0.4, cx + r * 0.5, cy - r * 0.35);
+}
+
+function drawWarningBadge(doc: jsPDF, cx: number, cy: number, r: number, bg: [number, number, number]) {
+  doc.setFillColor(...bg);
+  doc.triangle(cx - r, cy + r * 0.75, cx + r, cy + r * 0.75, cx, cy - r, 'F');
+  doc.setFillColor(255, 255, 255);
+  doc.rect(cx - 0.3, cy - r * 0.35, 0.6, r * 0.6, 'F');
+  doc.circle(cx, cy + r * 0.5, 0.45, 'F');
+}
+
+// =========================================================================
 // Month-title parsing — used to derive a stable YYYYMM suffix for the
 // generated Bill Number below from a "Month YYYY" period title.
 // =========================================================================
@@ -157,10 +197,14 @@ export async function generateSawaaPdfDocument(
     : `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
   const billNumber = `BILL-${now.getTime()}-${billMonthKey}`;
 
-  const GREEN: [number, number, number] = [30, 86, 49]; // #1E5631 — app brand green
+  // Premium A4 invoice palette: dark green header/accents + a gold trim,
+  // replacing the plain #1E5631 banner this function used before.
+  const GREEN: [number, number, number] = [0, 77, 64]; // #004d40
   const GREEN_LIGHT: [number, number, number] = [209, 250, 229];
   const RED: [number, number, number] = [185, 28, 28];
   const GREEN_DARK_TEXT: [number, number, number] = [21, 128, 61];
+  const GOLD: [number, number, number] = [212, 175, 55]; // #D4AF37
+  const CREAM: [number, number, number] = [253, 250, 240];
 
   let yPos = 0;
 
@@ -172,17 +216,25 @@ export async function generateSawaaPdfDocument(
   };
 
   // =========================================================================
-  // 1. HEADER: Green banner (#1E5631) with logo, business name, phone,
-  // address, and generation date.
+  // 1. HEADER: dark green (#004d40) banner with a gold border/divider, logo
+  // in a gold-ringed circle, centered business name + static taglines, and a
+  // "Monthly Milk Bill" / period / date block on the right.
   // =========================================================================
   const headerY = 12;
-  const headerH = companyLocation || companyPhone ? 46 : 30;
+  const headerH = 44;
   doc.setFillColor(...GREEN);
   doc.roundedRect(margin, headerY, contentWidth, headerH, 4, 4, 'F');
+  doc.setDrawColor(...GOLD);
+  doc.setLineWidth(0.6);
+  doc.roundedRect(margin, headerY, contentWidth, headerH, 4, 4, 'S');
+  doc.setLineWidth(0.2);
 
-  const logoCX = margin + 13;
-  const logoCY = headerY + 14;
-  const logoR = 9;
+  const logoCX = margin + 16;
+  const logoCY = headerY + headerH / 2;
+  const logoR = 10;
+
+  doc.setFillColor(...GOLD);
+  doc.circle(logoCX, logoCY, logoR + 1.2, 'F');
 
   let logoDrawn = false;
   if (businessSettings?.logoUrl) {
@@ -192,7 +244,9 @@ export async function generateSawaaPdfDocument(
       // itself, contain-fit and centered on the same point the fallback
       // emblem below uses, so it stays aligned with the business name
       // regardless of whether the source image is square or rectangular.
-      const maxDim = 16;
+      doc.setFillColor(255, 255, 255);
+      doc.circle(logoCX, logoCY, logoR, 'F');
+      const maxDim = 17;
       const dims = await loadImageNaturalSize(businessSettings.logoUrl);
       const { w: drawW, h: drawH } = dims
         ? computeContainSize(dims.width, dims.height, maxDim, maxDim)
@@ -214,52 +268,80 @@ export async function generateSawaaPdfDocument(
     doc.circle(logoCX + 2, logoCY - 0.5, logoR - 5, 'F');
   }
 
+  const brandX = margin + 32;
   doc.setTextColor(255, 255, 255);
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(16);
-  doc.text(companyName.toUpperCase(), margin + 26, headerY + 15);
-
-  let headerRowY = headerY + 27;
-  if (companyPhone) {
-    drawPhoneIcon(doc, margin + 4, headerRowY - 3.2, GREEN_LIGHT);
-    doc.setTextColor(...GREEN_LIGHT);
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(9);
-    doc.text(`Phone: ${companyPhone}`, margin + 11, headerRowY);
-    headerRowY += 8;
-  }
-  if (companyLocation) {
-    drawPinIcon(doc, margin + 4, headerRowY - 3.6, GREEN_LIGHT);
-    doc.setTextColor(...GREEN_LIGHT);
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(9);
-    doc.text(companyLocation, margin + 11, headerRowY);
-  }
-
-  doc.setTextColor(255, 255, 255);
-  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(17);
+  doc.text(companyName.toUpperCase(), brandX, headerY + 16);
+  doc.setFont('helvetica', 'italic');
   doc.setFontSize(8.5);
-  doc.text(`Date: ${billDateStr}`, pageWidth - margin - 4, headerY + 15, { align: 'right' });
+  doc.setTextColor(...GOLD);
+  doc.text('Fresh Milk Distribution Service', brandX, headerY + 23);
+  doc.setDrawColor(...GOLD);
+  doc.setLineWidth(0.3);
+  doc.line(brandX, headerY + 27, brandX + 55, headerY + 27);
+  doc.setFont('helvetica', 'italic');
+  doc.setFontSize(8);
+  doc.text('Pure Milk  ·  Healthy Life', brandX, headerY + 33);
 
-  yPos = headerY + headerH + 10;
-
-  // =========================================================================
-  // 2. "MONTHLY FRESH MILK BILL" title + period
-  // =========================================================================
-  doc.setTextColor(...GREEN);
+  // Right block: "Monthly Milk Bill" + period + generation date
+  const rightX = pageWidth - margin - 4;
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(13);
-  doc.text('MONTHLY FRESH MILK BILL', margin, yPos);
-  doc.setFontSize(9);
-  doc.text(`Period: ${periodTitle}`, pageWidth - margin, yPos, { align: 'right' });
-  yPos += 8;
+  doc.setFontSize(9.5);
+  doc.setTextColor(255, 255, 255);
+  doc.text('Monthly Milk Bill', rightX, headerY + 13, { align: 'right' });
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7.5);
+  doc.setTextColor(...GOLD);
+  const periodParts = periodTitle.split(' to ');
+  if (periodParts.length === 2) {
+    doc.text(`Period: ${periodParts[0]}`, rightX, headerY + 20, { align: 'right' });
+    doc.text(`to ${periodParts[1]}`, rightX, headerY + 25, { align: 'right' });
+  } else {
+    doc.text(`Period: ${periodTitle}`, rightX, headerY + 20, { align: 'right' });
+  }
+  doc.setTextColor(255, 255, 255);
+  doc.text(`Date: ${billDateStr}`, rightX, headerY + (periodParts.length === 2 ? 32 : 28), { align: 'right' });
+
+  yPos = headerY + headerH + 6;
+
+  // =========================================================================
+  // 2. Contact Strip — phone + address, centered, below the header.
+  // =========================================================================
+  if (companyPhone || companyLocation) {
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8.5);
+    const segments: { text: string; icon?: 'phone' | 'pin' }[] = [];
+    if (companyPhone) segments.push({ text: companyPhone, icon: 'phone' });
+    if (companyPhone && companyLocation) segments.push({ text: '|' });
+    if (companyLocation) segments.push({ text: companyLocation, icon: 'pin' });
+
+    const iconW = 5;
+    const gap = 2;
+    const totalW = segments.reduce((sum, s) => sum + (s.icon ? iconW : 0) + doc.getTextWidth(s.text) + gap, 0) - gap;
+    let curX = (pageWidth - totalW) / 2;
+    const textY = yPos + 4;
+    segments.forEach((s) => {
+      if (s.icon === 'phone') {
+        drawPhoneIcon(doc, curX, textY - 3.2, GREEN);
+        curX += iconW;
+      } else if (s.icon === 'pin') {
+        drawPinIcon(doc, curX, textY - 3.6, GREEN);
+        curX += iconW;
+      }
+      doc.setTextColor(60, 60, 60);
+      doc.text(s.text, curX, textY);
+      curX += doc.getTextWidth(s.text) + gap;
+    });
+    yPos += 10;
+  }
 
   // =========================================================================
   // 3. Customer Information + Billing Information boxes (side by side)
   // =========================================================================
   const infoBoxW = (contentWidth - 6) / 2;
   const infoBoxH = 28;
-  doc.setDrawColor(226, 232, 240);
+  doc.setDrawColor(221, 198, 140);
   doc.roundedRect(margin, yPos, infoBoxW, infoBoxH, 3, 3, 'S');
   doc.roundedRect(margin + infoBoxW + 6, yPos, infoBoxW, infoBoxH, 3, 3, 'S');
 
@@ -303,49 +385,80 @@ export async function generateSawaaPdfDocument(
   // 4. 4 Summary stat boxes
   // =========================================================================
   const statBoxW = (contentWidth - 9) / 4;
-  const statBoxH = 17;
-  const statBoxes: { label: string; value: string; fg: [number, number, number] }[] = [
-    { label: 'TOTAL MILK', value: `${totalMilk.toFixed(2)} L`, fg: [17, 24, 39] },
-    { label: 'TOTAL AMOUNT', value: `${currSym}${Math.round(totalAmount).toLocaleString()}`, fg: [17, 24, 39] },
-    { label: 'TOTAL RECEIVED', value: `${currSym}${Math.round(totalReceived).toLocaleString()}`, fg: GREEN_DARK_TEXT },
-    { label: 'REMAINING DUE', value: `${currSym}${Math.round(totalOutstanding).toLocaleString()}`, fg: RED },
+  const statBoxH = 21;
+  const statBoxes: {
+    label: string;
+    value: string;
+    fg: [number, number, number];
+    icon: (x: number, y: number, r: number) => void;
+  }[] = [
+    { label: 'TOTAL MILK', value: `${totalMilk.toFixed(2)} L`, fg: [17, 24, 39], icon: (x, y, r) => drawDropletBadge(doc, x, y, r, GREEN) },
+    { label: 'TOTAL AMOUNT', value: `${currSym}${Math.round(totalAmount).toLocaleString()}`, fg: [17, 24, 39], icon: (x, y, r) => drawCoinBadge(doc, x, y, r, GREEN) },
+    { label: 'RECEIVED', value: `${currSym}${Math.round(totalReceived).toLocaleString()}`, fg: GREEN_DARK_TEXT, icon: (x, y, r) => drawCheckBadge(doc, x, y, r, GREEN) },
+    { label: 'REMAINING DUE', value: `${currSym}${Math.round(totalOutstanding).toLocaleString()}`, fg: RED, icon: (x, y, r) => drawWarningBadge(doc, x, y, r, RED) },
   ];
   statBoxes.forEach((b, i) => {
     const x = margin + i * (statBoxW + 3);
-    doc.setFillColor(248, 250, 249);
-    doc.setDrawColor(226, 232, 240);
+    const cx = x + statBoxW / 2;
+    doc.setFillColor(253, 251, 245);
+    doc.setDrawColor(221, 198, 140);
     doc.roundedRect(x, yPos, statBoxW, statBoxH, 2, 2, 'FD');
+    b.icon(cx, yPos + 5, 3);
     doc.setTextColor(100, 116, 139);
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(6.3);
-    doc.text(b.label, x + statBoxW / 2, yPos + 6, { align: 'center' });
+    doc.text(b.label, cx, yPos + 12, { align: 'center' });
     doc.setTextColor(...b.fg);
     doc.setFontSize(9.5);
-    doc.text(b.value, x + statBoxW / 2, yPos + 13, { align: 'center' });
+    doc.text(b.value, cx, yPos + 18, { align: 'center' });
   });
   yPos += statBoxH + 6;
 
   // =========================================================================
-  // 5. Carryover + Total Payable Outstanding bar
+  // 5. TOTAL PAYABLE OUTSTANDING — gold-bordered cream card: grand total on
+  // the left, Payment Due By date on the right, with an optional carryover
+  // line above the total when a previous balance is actually owed.
   // =========================================================================
-  const carryH = previousDue > 0 ? 18 : 12;
-  doc.setFillColor(254, 252, 232);
-  doc.setDrawColor(253, 230, 138);
-  doc.roundedRect(margin, yPos, contentWidth, carryH, 3, 3, 'FD');
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(8);
-  doc.setTextColor(120, 96, 15);
-  if (previousDue > 0) {
-    doc.text(`PREVIOUS CARRYOVER BALANCE: ${currSym}${Math.round(previousDue).toLocaleString()}  |  ACTIVE BILL: ${currSym}${Math.round(totalAmount).toLocaleString()}`, margin + 4, yPos + 6);
-    doc.setFont('helvetica', 'bold');
-    doc.setTextColor(...RED);
-    doc.text(`TOTAL PAYABLE OUTSTANDING: ${currSym}${Math.round(totalOutstanding).toLocaleString()}`, margin + 4, yPos + 13);
-  } else {
-    doc.setFont('helvetica', 'bold');
-    doc.setTextColor(...RED);
-    doc.text(`TOTAL PAYABLE OUTSTANDING: ${currSym}${Math.round(totalOutstanding).toLocaleString()}`, margin + 4, yPos + 8);
+  const hasCarryover = previousDue > 0;
+  const outstandingH = hasCarryover ? 24 : 20;
+  doc.setFillColor(...CREAM);
+  doc.setDrawColor(...GOLD);
+  doc.setLineWidth(0.5);
+  doc.roundedRect(margin, yPos, contentWidth, outstandingH, 3, 3, 'FD');
+  doc.setLineWidth(0.2);
+
+  const dividerX = margin + contentWidth * 0.62;
+  let outLabelY = yPos + (hasCarryover ? 7 : 8);
+  if (hasCarryover) {
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7.5);
+    doc.setTextColor(120, 96, 15);
+    doc.text(
+      `Previous Carryover: ${currSym}${Math.round(previousDue).toLocaleString()}  ·  Active Bill: ${currSym}${Math.round(totalAmount).toLocaleString()}`,
+      margin + 6,
+      outLabelY
+    );
+    outLabelY += 7;
   }
-  yPos += carryH + 8;
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(7.5);
+  doc.setTextColor(120, 96, 15);
+  doc.text('TOTAL PAYABLE OUTSTANDING', margin + 6, outLabelY);
+  doc.setFontSize(15);
+  doc.setTextColor(...RED);
+  doc.text(`${currSym} ${Math.round(totalOutstanding).toLocaleString()}`, margin + 6, outLabelY + 8);
+
+  doc.setDrawColor(...GOLD);
+  doc.line(dividerX, yPos + 4, dividerX, yPos + outstandingH - 4);
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(7.5);
+  doc.setTextColor(100, 90, 40);
+  doc.text('Payment Due By', dividerX + 8, outLabelY);
+  doc.setFontSize(11);
+  doc.setTextColor(17, 24, 39);
+  doc.text(dueDateStr, dividerX + 8, outLabelY + 8);
+  yPos += outstandingH + 8;
 
   // =========================================================================
   // 6. TRANSACTION LEDGER DETAILS — paginated table, newest entries first
