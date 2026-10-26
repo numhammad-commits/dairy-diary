@@ -215,13 +215,21 @@ export async function generateSawaaPdfDocument(
     }
   };
 
+  // Payment accounts/QR — computed up front since the header now carries this
+  // instead of a separate section near the bottom (enabled accounts only; QR
+  // is the real uploaded image, never a fabricated placeholder on a real
+  // financial document).
+  const enabledAccounts = getEnabledPaymentAccounts(businessSettings);
+  const qrAccount = enabledAccounts.find((a) => a.qrCodeUrl);
+
   // =========================================================================
   // 1. HEADER: dark green (#004d40) banner with a gold border/divider, logo
-  // in a gold-ringed circle, centered business name + static taglines, and a
-  // "Monthly Milk Bill" / period / date block on the right.
+  // in a gold-ringed circle, business name + static taglines on the left, and
+  // payment account(s) + QR code on the right (Period/Date moved down into
+  // the Billing Information card below).
   // =========================================================================
   const headerY = 12;
-  const headerH = 44;
+  const headerH = 46 + Math.max(0, enabledAccounts.length - 2) * 5;
   doc.setFillColor(...GREEN);
   doc.roundedRect(margin, headerY, contentWidth, headerH, 4, 4, 'F');
   doc.setDrawColor(...GOLD);
@@ -284,24 +292,52 @@ export async function generateSawaaPdfDocument(
   doc.setFontSize(8);
   doc.text('Pure Milk  ·  Healthy Life', brandX, headerY + 33);
 
-  // Right block: "Monthly Milk Bill" + period + generation date
-  const rightX = pageWidth - margin - 4;
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(9.5);
-  doc.setTextColor(255, 255, 255);
-  doc.text('Monthly Milk Bill', rightX, headerY + 13, { align: 'right' });
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(7.5);
-  doc.setTextColor(...GOLD);
-  const periodParts = periodTitle.split(' to ');
-  if (periodParts.length === 2) {
-    doc.text(`Period: ${periodParts[0]}`, rightX, headerY + 20, { align: 'right' });
-    doc.text(`to ${periodParts[1]}`, rightX, headerY + 25, { align: 'right' });
-  } else {
-    doc.text(`Period: ${periodTitle}`, rightX, headerY + 20, { align: 'right' });
+  // Right block: payment account(s) + QR code (Period/Date now live in the
+  // Billing Information card below instead of here).
+  if (enabledAccounts.length > 0) {
+    const qrSize = 20;
+    const qrX = pageWidth - margin - qrSize - 6;
+    const qrY = headerY + 6;
+    const textRightX = qrX - 5;
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8);
+    doc.setTextColor(...GOLD);
+    doc.text('PAYMENT DETAILS', textRightX, headerY + 8, { align: 'right' });
+
+    let acctY = headerY + 14;
+    doc.setFontSize(8.5);
+    enabledAccounts.forEach((acc) => {
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(255, 255, 255);
+      doc.text(acc.name, textRightX, acctY, { align: 'right' });
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(7.5);
+      doc.setTextColor(...GREEN_LIGHT);
+      doc.text(acc.primaryDetail, textRightX, acctY + 4.5, { align: 'right' });
+      doc.setFontSize(8.5);
+      acctY += 10;
+    });
+
+    if (qrAccount?.qrCodeUrl) {
+      try {
+        const imgFormat = qrAccount.qrCodeUrl.startsWith('data:image/jpeg') || qrAccount.qrCodeUrl.startsWith('data:image/jpg') ? 'JPEG' : 'PNG';
+        doc.setFillColor(255, 255, 255);
+        doc.roundedRect(qrX - 1.5, qrY - 1.5, qrSize + 3, qrSize + 3, 1.5, 1.5, 'F');
+        const dims = await loadImageNaturalSize(qrAccount.qrCodeUrl);
+        const { w: drawW, h: drawH } = dims
+          ? computeContainSize(dims.width, dims.height, qrSize, qrSize)
+          : { w: qrSize, h: qrSize };
+        doc.addImage(qrAccount.qrCodeUrl, imgFormat, qrX + (qrSize - drawW) / 2, qrY + (qrSize - drawH) / 2, drawW, drawH);
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(6);
+        doc.setTextColor(...GOLD);
+        doc.text('SCAN TO PAY', qrX + qrSize / 2, qrY + qrSize + 5, { align: 'center' });
+      } catch (err) {
+        console.warn('Failed to render payment QR code in PDF header:', err);
+      }
+    }
   }
-  doc.setTextColor(255, 255, 255);
-  doc.text(`Date: ${billDateStr}`, rightX, headerY + (periodParts.length === 2 ? 32 : 28), { align: 'right' });
 
   yPos = headerY + headerH + 6;
 
@@ -340,7 +376,7 @@ export async function generateSawaaPdfDocument(
   // 3. Customer Information + Billing Information boxes (side by side)
   // =========================================================================
   const infoBoxW = (contentWidth - 6) / 2;
-  const infoBoxH = 28;
+  const infoBoxH = 32;
   doc.setDrawColor(221, 198, 140);
   doc.roundedRect(margin, yPos, infoBoxW, infoBoxH, 3, 3, 'S');
   doc.roundedRect(margin + infoBoxW + 6, yPos, infoBoxW, infoBoxH, 3, 3, 'S');
@@ -373,11 +409,12 @@ export async function generateSawaaPdfDocument(
   labelStyle();
   doc.text('BILLING INFORMATION', billColX, yPos + 6);
   smallValueStyle();
-  doc.text(`Bill Number: ${billNumber}`, billColX, yPos + 13);
-  doc.text(`Bill Date: ${billDateStr}`, billColX, yPos + 19);
+  doc.text(`Period: ${periodTitle}`, billColX, yPos + 13);
+  doc.text(`Bill Number: ${billNumber}`, billColX, yPos + 19);
+  doc.text(`Bill Date: ${billDateStr}`, billColX, yPos + 25);
   doc.setTextColor(...RED);
   doc.setFont('helvetica', 'bold');
-  doc.text(`Payment Due By: ${dueDateStr}`, billColX, yPos + 25);
+  doc.text(`Payment Due By: ${dueDateStr}`, billColX, yPos + 31);
 
   yPos += infoBoxH + 6;
 
@@ -563,97 +600,7 @@ export async function generateSawaaPdfDocument(
   yPos += tableRowH + 1 + 8;
 
   // =========================================================================
-  // 7. PAYMENT DETAILS + QR (enabled accounts only; QR is the real uploaded
-  // image, never a fabricated placeholder graphic on a real financial document)
-  // =========================================================================
-  const enabledAccounts = getEnabledPaymentAccounts(businessSettings);
-  const qrAccount = enabledAccounts.find((a) => a.qrCodeUrl);
-  const qrMaxSize = 26;
-  // Reserve extra room when a QR is present: image + two label lines below it
-  // (method name + account title), so neither gets clipped by a page break.
-  const paymentBoxH =
-    enabledAccounts.length === 0 ? 0 : Math.max(enabledAccounts.length * 6 + 6, qrAccount ? 42 : 32);
-  checkPageBreak(enabledAccounts.length === 0 ? 20 : paymentBoxH + 16);
-  doc.setTextColor(...GREEN);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(10);
-  doc.text('PAYMENT DETAILS', margin, yPos);
-  yPos += 6;
-
-  if (enabledAccounts.length === 0) {
-    doc.setTextColor(100, 116, 139);
-    doc.setFont('helvetica', 'italic');
-    doc.setFontSize(8.5);
-    doc.text('No payment account has been enabled for this business.', margin, yPos);
-    yPos += 10;
-  } else {
-    doc.setDrawColor(226, 232, 240);
-    doc.roundedRect(margin, yPos, contentWidth, paymentBoxH, 3, 3, 'S');
-
-    let lineY = yPos + 7;
-    doc.setFontSize(8.5);
-    enabledAccounts.forEach((acc) => {
-      doc.setFont('helvetica', 'bold');
-      doc.setTextColor(...GREEN);
-      const label = `${acc.name}: `;
-      doc.text(label, margin + 4, lineY);
-      const labelW = doc.getTextWidth(label);
-      doc.setFont('helvetica', 'normal');
-      doc.setTextColor(51, 65, 85);
-      const detail = `${acc.accountTitle} (${acc.primaryDetail}${acc.secondaryDetail ? ` · ${acc.secondaryDetail}` : ''})`;
-      doc.text(detail, margin + 4 + labelW, lineY);
-      lineY += 6;
-    });
-
-    const qrX = pageWidth - margin - qrMaxSize - 4;
-    const qrY = yPos + 4;
-    if (qrAccount?.qrCodeUrl) {
-      try {
-        const imgFormat = qrAccount.qrCodeUrl.startsWith('data:image/jpeg') || qrAccount.qrCodeUrl.startsWith('data:image/jpg') ? 'JPEG' : 'PNG';
-        const dims = await loadImageNaturalSize(qrAccount.qrCodeUrl);
-        const { w: drawW, h: drawH } = dims
-          ? computeContainSize(dims.width, dims.height, qrMaxSize, qrMaxSize)
-          : { w: qrMaxSize, h: qrMaxSize };
-        doc.addImage(
-          qrAccount.qrCodeUrl,
-          imgFormat,
-          qrX + (qrMaxSize - drawW) / 2,
-          qrY + (qrMaxSize - drawH) / 2,
-          drawW,
-          drawH
-        );
-        // Our own labels, drawn fresh every time — never dependent on whatever
-        // text (if any) happens to already be baked into the uploaded image.
-        doc.setTextColor(...GREEN);
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(6.5);
-        doc.text(`SCAN TO PAY VIA ${qrAccount.name.toUpperCase()}`, qrX + qrMaxSize / 2, qrY + qrMaxSize + 4, { align: 'center' });
-        doc.setTextColor(71, 85, 105);
-        doc.setFont('helvetica', 'normal');
-        doc.setFontSize(6);
-        doc.text(`Account: ${qrAccount.accountTitle}`, qrX + qrMaxSize / 2, qrY + qrMaxSize + 8, { align: 'center' });
-      } catch (err) {
-        console.warn('Failed to render payment QR code in PDF:', err);
-      }
-    } else {
-      // No account has an uploaded QR image yet — reserve the same space with a
-      // neutral placeholder so the layout stays balanced until one is added in
-      // Settings, instead of silently leaving a gap.
-      doc.setDrawColor(203, 213, 225);
-      doc.setFillColor(248, 250, 252);
-      doc.roundedRect(qrX, qrY, qrMaxSize, qrMaxSize, 2, 2, 'FD');
-      doc.setTextColor(148, 163, 184);
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(6);
-      doc.text('No QR Code', qrX + qrMaxSize / 2, qrY + qrMaxSize / 2 - 1, { align: 'center' });
-      doc.text('Uploaded', qrX + qrMaxSize / 2, qrY + qrMaxSize / 2 + 3, { align: 'center' });
-    }
-
-    yPos += paymentBoxH + 6;
-  }
-
-  // =========================================================================
-  // 8. 7-Day Payment Notice
+  // 7. 7-Day Payment Notice
   // =========================================================================
   checkPageBreak(18);
   doc.setFillColor(255, 251, 235);
@@ -671,30 +618,23 @@ export async function generateSawaaPdfDocument(
   yPos += 24;
 
   // =========================================================================
-  // 9. Dual Signatures
+  // 8. "Authorized By" line — replaces the old dual signature lines with a
+  // single clean, centered attribution under a short green accent rule.
   // =========================================================================
-  checkPageBreak(26);
-  const sigColW = contentWidth / 2;
-  const drawSignature = (x: number, title: string, subtitle: string) => {
-    doc.setDrawColor(148, 163, 184);
-    doc.setLineDashPattern([1.5, 1.5], 0);
-    doc.line(x + sigColW * 0.15, yPos, x + sigColW * 0.85, yPos);
-    doc.setLineDashPattern([], 0);
-    doc.setTextColor(30, 41, 59);
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(8.5);
-    doc.text(title, x + sigColW / 2, yPos + 6, { align: 'center' });
-    doc.setTextColor(100, 116, 139);
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(7.5);
-    doc.text(subtitle, x + sigColW / 2, yPos + 11, { align: 'center' });
-  };
-  drawSignature(margin, 'Authorized Signature', companyName);
-  drawSignature(margin + sigColW, 'Customer Signature', contact.name);
-  yPos += 18;
+  checkPageBreak(16);
+  doc.setDrawColor(...GREEN);
+  doc.setLineWidth(0.6);
+  doc.line(pageWidth / 2 - 24, yPos, pageWidth / 2 + 24, yPos);
+  doc.setLineWidth(0.2);
+  yPos += 6;
+  doc.setTextColor(...GREEN);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9);
+  doc.text(`Authorized By: ${companyName}`, pageWidth / 2, yPos, { align: 'center' });
+  yPos += 10;
 
   // =========================================================================
-  // 10. Footer
+  // 9. Footer
   // =========================================================================
   checkPageBreak(10);
   doc.setTextColor(148, 163, 184);
