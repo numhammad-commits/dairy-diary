@@ -102,7 +102,7 @@ export const CustomerShareReceiptModal: React.FC<CustomerShareReceiptModalProps>
   const businessName = businessSettings?.businessName || 'Dairy Diary';
   const templateVariant = receiptTemplateFromLabel(businessSettings?.receiptTemplate);
 
-  // Hidden receipt card, captured via html2canvas when the Due Receipt is shared.
+  // Hidden receipt card, captured via html2canvas when either the Due or Payment Receipt is shared.
   const receiptRef = useRef<HTMLDivElement>(null);
 
   const monthEntriesForReceipt = useMemo(() => {
@@ -209,12 +209,13 @@ export const CustomerShareReceiptModal: React.FC<CustomerShareReceiptModalProps>
     );
   };
 
-  // Handle Share (Due Receipt tab): capture the hidden ReceiptTemplate card as a real
-  // image via html2canvas and attach it via the native share sheet (Web Share API Level
-  // 2), with the formatted text as the companion caption. Falls back to downloading the
-  // image + opening WhatsApp with the text when file sharing isn't supported, and to
-  // text-only WhatsApp if the image capture itself fails.
-  const handleShareDueReceiptImage = async () => {
+  // Handle Share (both Due and Payment Receipt tabs): capture the hidden ReceiptTemplate
+  // card — already themed red/green per receiptType={activeTab} — as a real image via
+  // html2canvas and attach it via the native share sheet (Web Share API Level 2), with
+  // the formatted text as the companion caption. Falls back to downloading the image +
+  // opening WhatsApp with the text when file sharing isn't supported, and to text-only
+  // WhatsApp if the image capture itself fails.
+  const handleShareReceiptImage = async () => {
     if (!receiptRef.current) {
       const cleanPhone = contact.phone.replace(/[^0-9]/g, '');
       window.open(`https://wa.me/${cleanPhone}?text=${encodeURIComponent(shareTextPayload)}`, '_blank');
@@ -237,7 +238,7 @@ export const CustomerShareReceiptModal: React.FC<CustomerShareReceiptModalProps>
       const blob: Blob | null = await new Promise((resolve) => canvas.toBlob((b) => resolve(b), 'image/png'));
       if (!blob) throw new Error('Failed to create image blob from canvas');
 
-      const filename = `Dairy_Diary_Receipt_${contact.name.replace(/[^a-zA-Z0-9]/g, '_')}_${activeMonthDisplay.replace(/[^a-zA-Z0-9]/g, '_')}.png`;
+      const filename = `Dairy_Diary_${activeTab === 'due' ? 'Receipt' : 'Payment'}_${contact.name.replace(/[^a-zA-Z0-9]/g, '_')}_${activeMonthDisplay.replace(/[^a-zA-Z0-9]/g, '_')}.png`;
       const file = new File([blob], filename, { type: 'image/png' });
 
       if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
@@ -275,31 +276,10 @@ export const CustomerShareReceiptModal: React.FC<CustomerShareReceiptModalProps>
     }
   };
 
-  // Handle Share (Payment Receipt tab): no image template has been designed for a payment
-  // confirmation yet, so this tab keeps the existing text-only share.
-  const handleSharePaymentText = async () => {
-    if (navigator.share) {
-      try {
-        await navigator.share({ title: `${businessName} Receipt - ${contact.name}`, text: shareTextPayload });
-        if (showToast) showToast('Shared successfully!');
-        return;
-      } catch (err: any) {
-        if (err?.name === 'AbortError') return;
-      }
-    }
-    const cleanPhone = contact.phone.replace(/[^0-9]/g, '');
-    window.open(`https://wa.me/${cleanPhone}?text=${encodeURIComponent(shareTextPayload)}`, '_blank');
-    if (showToast) showToast('Receipt opened in WhatsApp');
-  };
-
   const handleShare = async () => {
     setIsSharing(true);
     try {
-      if (activeTab === 'due') {
-        await handleShareDueReceiptImage();
-      } else {
-        await handleSharePaymentText();
-      }
+      await handleShareReceiptImage();
     } finally {
       setIsSharing(false);
     }
@@ -642,7 +622,8 @@ export const CustomerShareReceiptModal: React.FC<CustomerShareReceiptModalProps>
         )}
 
         {/* Hidden receipt card, always mounted (off-screen) so html2canvas has real
-            layout/paint to capture the instant Share is tapped on the Due Receipt tab. */}
+            layout/paint to capture the instant Share is tapped, on either the Due or
+            Payment Receipt tab. */}
         <div style={{ position: 'fixed', top: 0, left: '-9999px', zIndex: -1 }} aria-hidden="true">
           <ReceiptTemplate
             ref={receiptRef}
