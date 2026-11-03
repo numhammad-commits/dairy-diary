@@ -40,5 +40,8 @@
   },
   "overrides": {
     "esbuild": "^0.28.0"
+  },
+  "optionalDependencies": {
+    "@rolldown/binding-linux-x64-gnu": "1.2.12"
   }
 }
