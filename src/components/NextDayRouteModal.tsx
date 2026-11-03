@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { X, Route, Check, Users } from 'lucide-react';
+import { X, Route, Check, Users, AlertTriangle } from 'lucide-react';
 import { Contact, LedgerEntry, MilkType } from '../types/dairy';
 import { getDeviceTodayDate, shiftDateString, formatPKR, formatLiters } from '../utils/formatters';
 
@@ -12,11 +12,11 @@ interface NextDayRouteModalProps {
 
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-function formatRouteDateLabel(dateStr: string): string {
+function formatRouteDateLabel(dateStr: string, prefix: string): string {
   const [, monthStr, dayStr] = dateStr.split('-');
   const monthIdx = parseInt(monthStr, 10) - 1;
   const day = parseInt(dayStr, 10);
-  return `Tomorrow, ${MONTH_NAMES[monthIdx] || ''} ${day}`;
+  return `${prefix}, ${MONTH_NAMES[monthIdx] || ''} ${day}`;
 }
 
 export const NextDayRouteModal: React.FC<NextDayRouteModalProps> = ({
@@ -26,6 +26,8 @@ export const NextDayRouteModal: React.FC<NextDayRouteModalProps> = ({
   onConfirm,
 }) => {
   const tomorrowDate = useMemo(() => shiftDateString(getDeviceTodayDate(), 1), []);
+  const todayDate = useMemo(() => getDeviceTodayDate(), []);
+  const [viewMode, setViewMode] = useState<'today' | 'tomorrow'>('tomorrow');
 
   // Only active buyer (customer) contacts are eligible for a delivery route —
   // sellers are farmers the business buys from, not delivery customers.
@@ -64,6 +66,35 @@ export const NextDayRouteModal: React.FC<NextDayRouteModalProps> = ({
 
   const pendingRows = rows.filter((r) => !r.alreadyExists);
   const alreadyAddedRows = rows.filter((r) => r.alreadyExists);
+
+  // "Today" view: read-only cross-reference of the route's customers against today's
+  // actual LedgerEntry records — matches on date only (any shift), since the goal is
+  // simply "have we delivered to them today," not shift bookkeeping.
+  const todayRows = useMemo(
+    () =>
+      eligibleContacts.map((c) => {
+        const matchingEntry = entries.find((e) => e.contactId === c.id && e.date === todayDate);
+        if (matchingEntry) {
+          return {
+            contact: c,
+            qty: matchingEntry.liters,
+            rate: matchingEntry.ratePerLiter,
+            amount: matchingEntry.totalAmount,
+            delivered: true,
+          };
+        }
+        const qty = c.fixedQuantity || c.morningQuotaLiters || 2.0;
+        const rate = c.defaultRate || 240;
+        return { contact: c, qty, rate, amount: Math.round(qty * rate), delivered: false };
+      }),
+    [eligibleContacts, entries, todayDate]
+  );
+
+  const deliveredTodayRows = todayRows.filter((r) => r.delivered);
+  const missingTodayRows = todayRows.filter((r) => !r.delivered);
+
+  const totalDeliveredToday = deliveredTodayRows.reduce((sum, r) => sum + r.amount, 0);
+  const totalPendingToday = missingTodayRows.reduce((sum, r) => sum + r.amount, 0);
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(
     () => new Set(pendingRows.map((r) => r.contact.id))
@@ -120,9 +151,13 @@ export const NextDayRouteModal: React.FC<NextDayRouteModalProps> = ({
           <div className="flex items-center gap-2.5 min-w-0">
             <Route className="w-5 h-5 text-white shrink-0" />
             <div className="min-w-0">
-              <h2 className="text-sm font-black tracking-tight truncate">Next Day Route</h2>
+              <h2 className="text-sm font-black tracking-tight truncate">
+                {viewMode === 'today' ? "Today's Route" : 'Next Day Route'}
+              </h2>
               <p className="text-[11px] text-white/70 font-medium truncate">
-                {formatRouteDateLabel(tomorrowDate)}
+                {viewMode === 'today'
+                  ? formatRouteDateLabel(todayDate, 'Today')
+                  : formatRouteDateLabel(tomorrowDate, 'Tomorrow')}
               </p>
             </div>
           </div>
@@ -136,9 +171,107 @@ export const NextDayRouteModal: React.FC<NextDayRouteModalProps> = ({
           </button>
         </div>
 
-        {/* Customer List: grouped into Pending / Already Added */}
+        {/* Today / Tomorrow Toggle */}
+        <div className="mx-4 mt-3 p-1 rounded-full bg-white border border-[#D6E9E1] flex items-center shadow-xs select-none shrink-0">
+          <button
+            type="button"
+            onClick={() => setViewMode('today')}
+            className={`flex-1 py-1.5 text-xs font-bold rounded-full transition-all cursor-pointer text-center ${
+              viewMode === 'today' ? 'bg-[#0B8F68] text-white shadow-xs' : 'text-[#163B32] hover:text-[#0B8F68]'
+            }`}
+          >
+            Today
+          </button>
+          <div className="h-3 w-px bg-[#D6E9E1] shrink-0" />
+          <button
+            type="button"
+            onClick={() => setViewMode('tomorrow')}
+            className={`flex-1 py-1.5 text-xs font-bold rounded-full transition-all cursor-pointer text-center ${
+              viewMode === 'tomorrow' ? 'bg-[#0B8F68] text-white shadow-xs' : 'text-[#163B32] hover:text-[#0B8F68]'
+            }`}
+          >
+            Tomorrow
+          </button>
+        </div>
+
+        {/* Customer List: grouped into Pending / Already Added (Tomorrow), or Delivered / Missing (Today) */}
         <div className="flex-1 min-h-0 overflow-y-auto px-4 pt-3 pb-2 space-y-2">
-          {rows.length === 0 ? (
+          {viewMode === 'today' ? (
+            todayRows.length === 0 ? (
+              <div className="py-10 text-center">
+                <Users className="w-8 h-8 text-[#55756D]/60 mx-auto mb-2" />
+                <p className="text-sm font-bold text-[#163B32]">No active customers found</p>
+              </div>
+            ) : (
+              <>
+                {missingTodayRows.length > 0 && (
+                  <>
+                    <div className="flex items-center gap-1.5 px-1">
+                      <span className="text-[11px] font-black uppercase tracking-wider text-amber-600">
+                        Missing / Pending
+                      </span>
+                      <span className="text-[10px] font-bold text-[#55756D]">({missingTodayRows.length})</span>
+                    </div>
+                    {missingTodayRows.map((r) => (
+                      <div
+                        key={r.contact.id}
+                        className="flex items-center justify-between gap-2.5 bg-amber-50/60 rounded-2xl px-3 py-2.5 border border-amber-200"
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                          <div className="w-5 h-5 rounded-md border-2 bg-amber-100 border-amber-300 flex items-center justify-center shrink-0">
+                            <AlertTriangle className="w-3 h-3 text-amber-600 stroke-[2.5]" />
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-sm font-bold text-[#8a6116] truncate">{r.contact.name}</p>
+                            <p className="text-[11px] text-amber-700/80 font-semibold">
+                              Not delivered yet · expected {formatLiters(r.qty)}
+                            </p>
+                          </div>
+                        </div>
+                        <span className="text-xs font-black text-amber-700 shrink-0">
+                          {formatPKR(r.amount)}
+                        </span>
+                      </div>
+                    ))}
+                  </>
+                )}
+
+                {deliveredTodayRows.length > 0 && (
+                  <>
+                    <div className="flex items-center gap-1.5 px-1 pt-2">
+                      <span className="text-[11px] font-black uppercase tracking-wider text-[#0B8F68]">
+                        Delivered Today
+                      </span>
+                      <span className="text-[10px] font-bold text-[#55756D]">
+                        ({deliveredTodayRows.length})
+                      </span>
+                    </div>
+                    {deliveredTodayRows.map((r) => (
+                      <div
+                        key={r.contact.id}
+                        className="flex items-center justify-between gap-2.5 bg-white rounded-2xl px-3 py-2.5 border border-[#D6E9E1]"
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                          <div className="w-5 h-5 rounded-md border-2 bg-[#0B8F68] border-[#0B8F68] flex items-center justify-center shrink-0">
+                            <Check className="w-3.5 h-3.5 text-white stroke-[3]" />
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-sm font-bold text-[#163B32] truncate">{r.contact.name}</p>
+                            <p className="text-[11px] text-[#55756D] font-medium">
+                              {formatLiters(r.qty)} · Rs{r.rate.toFixed(0)}/L
+                            </p>
+                          </div>
+                        </div>
+                        <span className="text-xs font-black text-[#163B32] shrink-0">
+                          {formatPKR(r.amount)}
+                        </span>
+                      </div>
+                    ))}
+                  </>
+                )}
+              </>
+            )
+          ) : rows.length === 0 ? (
             <div className="py-10 text-center">
               <Users className="w-8 h-8 text-[#55756D]/60 mx-auto mb-2" />
               <p className="text-sm font-bold text-[#163B32]">No active customers found</p>
@@ -224,22 +357,35 @@ export const NextDayRouteModal: React.FC<NextDayRouteModalProps> = ({
 
         {/* Footer */}
         <div className="px-4 py-3.5 border-t border-[#D6E9E1] bg-white/70 shrink-0 space-y-2.5">
-          <div className="flex items-center justify-between text-xs font-bold text-[#55756D]">
-            <span>
-              {checkedPendingRows.length} customer{checkedPendingRows.length !== 1 ? 's' : ''} selected
-            </span>
-            <span className="text-sm font-black text-[#163B32]">
-              Total: {formatLiters(totalLiters)} | {formatPKR(totalAmount)}
-            </span>
-          </div>
-          <button
-            type="button"
-            onClick={handleConfirm}
-            disabled={checkedPendingRows.length === 0}
-            className="w-full py-3.5 rounded-2xl bg-[#0B8F68] hover:bg-[#087A5A] active:bg-[#066B4D] disabled:opacity-40 disabled:cursor-not-allowed text-white font-black text-sm tracking-tight transition-all cursor-pointer shadow-sm"
-          >
-            Confirm Deliveries for Tomorrow
-          </button>
+          {viewMode === 'today' ? (
+            <div className="flex items-center justify-between text-xs font-bold">
+              <span className="text-[#0B8F68]">
+                Delivered: {formatPKR(totalDeliveredToday)} ({deliveredTodayRows.length})
+              </span>
+              <span className="text-amber-600">
+                Pending: {formatPKR(totalPendingToday)} ({missingTodayRows.length})
+              </span>
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center justify-between text-xs font-bold text-[#55756D]">
+                <span>
+                  {checkedPendingRows.length} customer{checkedPendingRows.length !== 1 ? 's' : ''} selected
+                </span>
+                <span className="text-sm font-black text-[#163B32]">
+                  Total: {formatLiters(totalLiters)} | {formatPKR(totalAmount)}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={handleConfirm}
+                disabled={checkedPendingRows.length === 0}
+                className="w-full py-3.5 rounded-2xl bg-[#0B8F68] hover:bg-[#087A5A] active:bg-[#066B4D] disabled:opacity-40 disabled:cursor-not-allowed text-white font-black text-sm tracking-tight transition-all cursor-pointer shadow-sm"
+              >
+                Confirm Deliveries for Tomorrow
+              </button>
+            </>
+          )}
         </div>
       </div>
     </div>
