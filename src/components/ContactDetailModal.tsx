@@ -148,6 +148,9 @@ export const ContactDetailModal: React.FC<ContactDetailModalProps> = ({
 }) => {
   // Canonical contact state for instant reactive updates
   const [activeContact, setActiveContact] = useState<Contact>(contact);
+  // Buy Milk contacts (role 'seller') are vendors we pay; Sell Milk contacts
+  // (role 'buyer') are customers who pay us — terminology flips accordingly.
+  const isVendor = activeContact.role === 'seller';
   const [isEditingCustomer, setIsEditingCustomer] = useState<boolean>(false);
   const [editingEntry, setEditingEntry] = useState<LedgerEntry | null>(null);
 
@@ -792,7 +795,7 @@ export const ContactDetailModal: React.FC<ContactDetailModalProps> = ({
               {/* Second Metrics Row: Received, Billing Pill, Outstanding Pill */}
               <div className="flex items-center justify-between pt-1 gap-1.5 flex-wrap">
                 <div className="flex items-center gap-1">
-                  <span className="text-xs font-bold text-[#55756D]">Received</span>
+                  <span className="text-xs font-bold text-[#55756D]">{isVendor ? 'Paid' : 'Received'}</span>
                   <span className="text-sm font-black text-[#0B9B72]">
                     Rs{Math.round(metrics.received)}
                   </span>
@@ -882,7 +885,9 @@ export const ContactDetailModal: React.FC<ContactDetailModalProps> = ({
                 <div className="w-7 h-7 rounded-full bg-teal-50 border border-teal-200 flex items-center justify-center mb-1 group-hover:scale-105 transition-transform text-teal-700">
                   <Wallet className="w-3.5 h-3.5 stroke-[2.5]" />
                 </div>
-                <span className="text-[11px] font-extrabold tracking-tight text-[#163B32]">Receive</span>
+                <span className="text-[11px] font-extrabold tracking-tight text-[#163B32]">
+                  {isVendor ? 'Pay Vendor' : 'Receive'}
+                </span>
               </button>
 
               {/* Card 3: History */}
@@ -955,7 +960,7 @@ export const ContactDetailModal: React.FC<ContactDetailModalProps> = ({
                           entryFilter === opt.value ? 'text-[#0B8F68]' : 'text-[#163B32]'
                         }`}
                       >
-                        <span>{opt.label}</span>
+                        <span>{isVendor && opt.value === 'received' ? 'Paid' : opt.label}</span>
                         {entryFilter === opt.value && <Check className="w-3.5 h-3.5 text-[#0B8F68]" />}
                       </button>
                     ))}

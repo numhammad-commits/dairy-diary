@@ -26,6 +26,9 @@ export const CustomerReceivePaymentModal: React.FC<CustomerReceivePaymentModalPr
   onClose,
   onSavePayment,
 }) => {
+  // Buy Milk contacts (role 'seller') are vendors we pay; Sell Milk contacts
+  // (role 'buyer') are customers who pay us — terminology flips accordingly.
+  const isVendor = contact.role === 'seller';
   const [amountStr, setAmountStr] = useState<string>('');
   const [selectedMonth, setSelectedMonth] = useState<string>(currentMonthKey);
   const [paymentDate, setPaymentDate] = useState<string>(getDeviceTodayDate());
@@ -107,10 +110,10 @@ export const CustomerReceivePaymentModal: React.FC<CustomerReceivePaymentModalPr
             </button>
             <div className="min-w-0">
               <h1 className="text-base font-extrabold tracking-tight text-white leading-tight truncate">
-                Receive Payment — {contact.name}
+                {isVendor ? 'Pay Vendor' : 'Receive Payment'} — {contact.name}
               </h1>
               <p className="text-xs text-white/80 font-medium leading-tight">
-                Record Payment Received
+                {isVendor ? 'Record Payment Sent' : 'Record Payment Received'}
               </p>
             </div>
           </div>
@@ -174,7 +177,7 @@ export const CustomerReceivePaymentModal: React.FC<CustomerReceivePaymentModalPr
           {/* 1. Amount Received (Rs) */}
           <div className="glass-card rounded-2xl p-3 border border-[#D6E9E1] shadow-xs">
             <label className="block text-xs font-extrabold text-[#163B32] mb-1">
-              Amount Received (Rs) <span className="text-[#E5485D]">*</span>
+              {isVendor ? 'Amount Paid (Rs)' : 'Amount Received (Rs)'} <span className="text-[#E5485D]">*</span>
             </label>
             <div className="relative flex items-center">
               <span className="text-xs font-bold text-[#55756D] absolute left-3">Rs</span>

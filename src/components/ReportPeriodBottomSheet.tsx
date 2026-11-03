@@ -55,6 +55,9 @@ export const ReportPeriodBottomSheet: React.FC<ReportPeriodBottomSheetProps> = (
   onClose,
   showToast,
 }) => {
+  // Buy Milk contacts (role 'seller') are vendors we pay; Sell Milk contacts
+  // (role 'buyer') are customers who pay us — terminology flips accordingly.
+  const isVendor = contact.role === 'seller';
   // Step State: 'select_period' | 'report_ready'
   const [currentStep, setCurrentStep] = useState<'select_period' | 'report_ready'>('select_period');
 
@@ -275,7 +278,7 @@ export const ReportPeriodBottomSheet: React.FC<ReportPeriodBottomSheetProps> = (
           'Quantity (L)',
           'Rate (Rs/L)',
           'Total Amount (Rs)',
-          'Received (Rs)',
+          isVendor ? 'Paid (Rs)' : 'Received (Rs)',
           'Due (Rs)'
         ];
 
@@ -300,7 +303,7 @@ export const ReportPeriodBottomSheet: React.FC<ReportPeriodBottomSheetProps> = (
           ['Report Period', `"${periodTitle}"`],
           ['Total Volume (L)', totalMilk.toFixed(2)],
           ['Total Amount (Rs)', totalAmount],
-          ['Total Received (Rs)', totalReceived],
+          [isVendor ? 'Total Paid (Rs)' : 'Total Received (Rs)', totalReceived],
           ['Period Due (Rs)', periodDue],
           ['Previous Carryover Balance (Rs)', previousDue],
           ['Total Outstanding (Rs)', totalOutstanding]
@@ -1166,7 +1169,9 @@ export const ReportPeriodBottomSheet: React.FC<ReportPeriodBottomSheetProps> = (
                   </span>
                 </div>
                 <div className="bg-teal-50/70 p-3 rounded-2xl border border-teal-200 text-center">
-                  <span className="text-[10px] font-extrabold text-teal-800 uppercase block">Total Received</span>
+                  <span className="text-[10px] font-extrabold text-teal-800 uppercase block">
+                    {isVendor ? 'Total Paid' : 'Total Received'}
+                  </span>
                   <span className="text-sm sm:text-base font-black text-teal-950 block mt-0.5">
                     {businessSettings?.currencySymbol || 'Rs.'} {Math.round(reportData.totalReceived).toLocaleString()}
                   </span>

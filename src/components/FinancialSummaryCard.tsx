@@ -14,6 +14,10 @@ interface FinancialSummaryCardProps {
   currentMonthKey?: string;
   onMonthChange?: (newKey: string) => void;
   onOpenTracker?: () => void;
+  // True only when the active filter shows exclusively Buy Milk (vendor) contacts —
+  // in that case "Received" is relabeled "Paid" since we're the one paying them.
+  // Left false/omitted for Sell Milk or the mixed "All" view.
+  isVendorView?: boolean;
 }
 
 export const FinancialSummaryCard: React.FC<FinancialSummaryCardProps> = ({
@@ -27,6 +31,7 @@ export const FinancialSummaryCard: React.FC<FinancialSummaryCardProps> = ({
   currentMonthKey,
   onMonthChange,
   onOpenTracker,
+  isVendorView = false,
 }) => {
   return (
     <div className="mx-3 my-2 space-y-2 select-none">
@@ -107,7 +112,7 @@ export const FinancialSummaryCard: React.FC<FinancialSummaryCardProps> = ({
           </div>
           <div className="min-w-0">
             <span className="block text-xs font-semibold text-[#55756D] leading-tight mb-0.5">
-              Received
+              {isVendorView ? 'Paid' : 'Received'}
             </span>
             <span className="text-base sm:text-lg font-black text-[#0B9B72] tracking-tight leading-tight truncate block">
               {formatPKR(received)}

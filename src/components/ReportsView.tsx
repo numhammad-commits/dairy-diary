@@ -84,6 +84,15 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   expenses,
   paymentRecords = [],
 }) => {
+  // Lookup used to tell, per payment row, whether the contact is a Buy Milk
+  // vendor (role 'seller', we pay them) or a Sell Milk customer (role 'buyer',
+  // they pay us) — drives the "Payment Paid" vs "Payment Received" label below.
+  const contactsById = useMemo(() => {
+    const map = new Map<string, Contact>();
+    contacts.forEach((c) => map.set(c.id, c));
+    return map;
+  }, [contacts]);
+
   // 1. Top-Level Mode: Buy & Sell (operational ledger view) vs Profit & Loss (accounting view)
   const [activeMode, setActiveMode] = useState<ReportMode>('buy_sell');
 
@@ -1004,6 +1013,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
 
                   if (item.kind === 'payment') {
                     const payment = item.payment;
+                    const paymentIsVendor =
+                      (payment.contactId ? contactsById.get(payment.contactId)?.role : undefined) === 'seller';
                     return (
                       <div
                         key={`payment-${item.id}`}
@@ -1018,7 +1029,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                               {payment.contactName}
                             </span>
                             <div className="text-xs text-[#55756D] font-medium mt-0.5">
-                              Payment Received{payment.paymentMethod ? ` · ${payment.paymentMethod}` : ''}
+                              {paymentIsVendor ? 'Payment Paid' : 'Payment Received'}
+                              {payment.paymentMethod ? ` · ${payment.paymentMethod}` : ''}
                             </div>
                           </div>
                         </div>

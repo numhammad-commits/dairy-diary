@@ -35,6 +35,9 @@ export const CustomerPaymentHistoryModal: React.FC<CustomerPaymentHistoryModalPr
   onEditPayment,
   onDeletePayment,
 }) => {
+  // Buy Milk contacts (role 'seller') are vendors we pay; Sell Milk contacts
+  // (role 'buyer') are customers who pay us — terminology flips accordingly.
+  const isVendor = contact.role === 'seller';
   const [expandedMonthKey, setExpandedMonthKey] = useState<string | null>(currentMonthKey);
   const [editingPayment, setEditingPayment] = useState<PaymentRecord | null>(null);
   const [editAmountStr, setEditAmountStr] = useState<string>('');
@@ -231,7 +234,9 @@ export const CustomerPaymentHistoryModal: React.FC<CustomerPaymentHistoryModalPr
                         </span>
                       </div>
                       <div>
-                        <span className="text-[10px] font-semibold text-[#55756D] block">Received</span>
+                        <span className="text-[10px] font-semibold text-[#55756D] block">
+                          {isVendor ? 'Paid' : 'Received'}
+                        </span>
                         <span className="text-xs font-black text-[#0B9B72] block mt-0.5">
                           Rs{Math.round(m.amountReceived)}
                         </span>
@@ -272,7 +277,7 @@ export const CustomerPaymentHistoryModal: React.FC<CustomerPaymentHistoryModalPr
                                 <DollarSign className="w-3.5 h-3.5 text-[#0B8F68] shrink-0" />
                                 <div className="min-w-0">
                                   <span className="font-extrabold text-[#163B32] block leading-tight">
-                                    Payment Received
+                                    {isVendor ? 'Payment Paid' : 'Payment Received'}
                                   </span>
                                   <span className="text-[10px] text-[#55756D] block truncate">
                                     {p.date} • {p.paymentMethod || 'Cash'}

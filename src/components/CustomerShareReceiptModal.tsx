@@ -94,6 +94,9 @@ export const CustomerShareReceiptModal: React.FC<CustomerShareReceiptModalProps>
   onClose,
   showToast,
 }) => {
+  // Buy Milk contacts (role 'seller') are vendors we pay; Sell Milk contacts
+  // (role 'buyer') are customers who pay us — terminology flips accordingly.
+  const isVendor = contact.role === 'seller';
   const [activeTab, setActiveTab] = useState<'due' | 'payment'>('due');
   const [isFullscreenPreview, setIsFullscreenPreview] = useState<boolean>(false);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState<boolean>(false);
@@ -168,10 +171,10 @@ export const CustomerShareReceiptModal: React.FC<CustomerShareReceiptModalProps>
       const pMethod = latestPayment?.paymentMethod || 'Cash';
       return `*DAIRY DIARY — PAYMENT RECEIPT* 🧾\n` +
         `-------------------------\n` +
-        `👤 *Customer:* ${contact.name}\n` +
+        `👤 *${isVendor ? 'Vendor' : 'Customer'}:* ${contact.name}\n` +
         `📅 *Date:* ${pDate}\n` +
         `💳 *Method:* ${pMethod}\n` +
-        `✅ *Amount Received:* ${formatPKR(amt)}\n` +
+        `✅ *${isVendor ? 'Amount Paid' : 'Amount Received'}:* ${formatPKR(amt)}\n` +
         `⚠️ *Remaining Due:* ${formatPKR(metrics.due + metrics.previousDue)}\n` +
         `-------------------------\n` +
         `Thank you for your business!\n` +
@@ -455,7 +458,7 @@ export const CustomerShareReceiptModal: React.FC<CustomerShareReceiptModalProps>
                   </div>
 
                   <div className="flex items-center justify-between py-1 border-b border-slate-100">
-                    <span className="text-[#757575] font-semibold">Month Received</span>
+                    <span className="text-[#757575] font-semibold">{isVendor ? 'Month Paid' : 'Month Received'}</span>
                     <span className="font-black text-[#1B5E20]">{formatPKR(metrics.received)}</span>
                   </div>
 
@@ -505,7 +508,9 @@ export const CustomerShareReceiptModal: React.FC<CustomerShareReceiptModalProps>
 
                       {/* Highlighted Received Amount */}
                       <div className="p-3 bg-[#E8F5E9] rounded-xl border border-[#C8E6C9] flex items-center justify-between mt-2">
-                        <span className="font-black text-xs text-[#1B5E20]">Amount Received</span>
+                        <span className="font-black text-xs text-[#1B5E20]">
+                          {isVendor ? 'Amount Paid' : 'Amount Received'}
+                        </span>
                         <span className="font-black text-base text-[#1B5E20]">
                           +Rs{latestPayment.amount.toLocaleString('en-PK')}
                         </span>

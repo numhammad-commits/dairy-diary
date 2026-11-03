@@ -1002,6 +1002,7 @@ export default function App() {
                 previousBalance={currentSummary.totalPreviousDue}
                 onOpenOutstandingInfo={() => setShowOutstandingModal(true)}
                 onOpenTracker={() => setActiveNavTab('tracker')}
+                isVendorView={activeFilterTab === 'buy_milk'}
               />
             )}
 
@@ -1116,6 +1117,7 @@ export default function App() {
         {activeNavTab === 'payment_history' && (
           <PaymentHistoryView
             paymentRecords={paymentRecords}
+            contacts={contacts}
             initialMonthKey={currentMonthKey}
             onBack={() => setActiveNavTab('home')}
             showToast={showToast}

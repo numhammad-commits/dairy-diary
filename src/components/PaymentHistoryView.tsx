@@ -8,11 +8,12 @@ import {
   Receipt,
   Download
 } from 'lucide-react';
-import { PaymentRecord } from '../types/dairy';
+import { Contact, PaymentRecord } from '../types/dairy';
 import { getFullMonthDisplay, shiftMonthKey, getDeviceCurrentMonthKey } from '../utils/formatters';
 
 interface PaymentHistoryViewProps {
   paymentRecords: PaymentRecord[];
+  contacts?: Contact[];
   initialMonthKey?: string;
   onBack: () => void;
   showToast?: (message: string) => void;
@@ -20,11 +21,21 @@ interface PaymentHistoryViewProps {
 
 export const PaymentHistoryView: React.FC<PaymentHistoryViewProps> = ({
   paymentRecords,
+  contacts = [],
   initialMonthKey = getDeviceCurrentMonthKey(),
   onBack,
   showToast,
 }) => {
   const [selectedMonthKey, setSelectedMonthKey] = useState<string>(initialMonthKey);
+
+  // Lookup used to tell, per payment row, whether the contact is a Buy Milk
+  // vendor (role 'seller', we pay them) or a Sell Milk customer (role 'buyer',
+  // they pay us) — drives the "Paid" vs "Received" status label below.
+  const contactsById = useMemo(() => {
+    const map = new Map<string, Contact>();
+    contacts.forEach((c) => map.set(c.id, c));
+    return map;
+  }, [contacts]);
 
   React.useEffect(() => {
     if (initialMonthKey) {
@@ -147,7 +158,10 @@ export const PaymentHistoryView: React.FC<PaymentHistoryViewProps> = ({
         {/* Itemized Payment Records */}
         {monthlyPayments.length > 0 ? (
           <div className="space-y-3">
-            {monthlyPayments.map((record) => (
+            {monthlyPayments.map((record) => {
+              const recordIsVendor =
+                (record.contactId ? contactsById.get(record.contactId)?.role : undefined) === 'seller';
+              return (
               <div
                 key={record.id}
                 className="glass-card rounded-2xl p-4 border border-[#D6E9E1] shadow-xs flex items-center justify-between hover:border-[#0B8F68]/30 transition-all text-[#163B32]"
@@ -180,11 +194,12 @@ export const PaymentHistoryView: React.FC<PaymentHistoryViewProps> = ({
                     {formatPositiveAmount(record.amount)}
                   </span>
                   <span className="text-xs text-[#55756D] font-medium block mt-0.5">
-                    {record.status}
+                    {recordIsVendor ? 'Paid' : record.status}
                   </span>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         ) : (
           /* Empty State */
