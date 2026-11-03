@@ -4,7 +4,7 @@ import App from './App.tsx';
 import './index.css';
 
 // OAuth Client IDs are public identifiers, safe to embed in client-side code.
-const GOOGLE_CLIENT_ID = '1093949898818-h6o1vmd8n3pasu6nql28q7cqhsh9fnor.apps.googleusercontent.com';
+const GOOGLE_CLIENT_ID = '1093948980818-h60lvmd8n3pasu6nql28q7cqhsh91nor.apps.googleusercontent.com';
 
 // Register PWA service worker
 if ('serviceWorker' in navigator) {
