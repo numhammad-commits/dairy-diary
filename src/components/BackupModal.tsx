@@ -1,7 +1,7 @@
 import React, { useRef, useState } from 'react';
 import { useGoogleLogin } from '@react-oauth/google';
-import { X, Cloud, Download, Upload, AlertCircle, Mail, CheckCircle2, ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
-import { Contact, LedgerEntry, ExpenseItem } from '../types/dairy';
+import { X, Cloud, Download, Upload, AlertCircle, Mail, CheckCircle2, ChevronDown, ChevronUp, Loader2, Send } from 'lucide-react';
+import { Contact, LedgerEntry, ExpenseItem, BusinessSettings } from '../types/dairy';
 import { exportFullDatabase, restoreFullDatabase } from '../utils/storage';
 import { getDeviceTodayDate } from '../utils/formatters';
 
@@ -12,6 +12,8 @@ interface BackupModalProps {
   onClose: () => void;
   onRestoreSuccess?: () => void;
   showToast?: (message: string) => void;
+  businessSettings: BusinessSettings;
+  onUpdateSettings: (settings: BusinessSettings) => void;
 }
 
 type BackupFrequency = 'daily' | '3days' | 'weekly';
@@ -182,9 +184,13 @@ export const BackupModal: React.FC<BackupModalProps> = ({
   onClose,
   onRestoreSuccess,
   showToast,
+  businessSettings,
+  onUpdateSettings,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [restoreError, setRestoreError] = useState<string | null>(null);
+  const [isSendingTelegram, setIsSendingTelegram] = useState(false);
+  const [pendingRestoreData, setPendingRestoreData] = useState<any | null>(null);
   const [autoBackupEnabled, setAutoBackupEnabled] = useState(() => loadAutoBackupSettings().enabled);
   const [backupFrequency, setBackupFrequency] = useState<BackupFrequency>(() => loadAutoBackupSettings().frequency);
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -306,6 +312,45 @@ export const BackupModal: React.FC<BackupModalProps> = ({
     if (showToast) showToast('Backup file downloaded successfully');
   };
 
+  // "Backup to Telegram" — sends the full export as a .json document to a user-configured
+  // Telegram bot/chat via the Bot API's sendDocument endpoint. Native fetch + FormData only.
+  const handleBackupToTelegram = async () => {
+    const token = businessSettings.telegramBotToken?.trim();
+    const chatId = businessSettings.telegramChatId?.trim();
+    if (!token || !chatId) {
+      setRestoreError('Enter both your Telegram Bot Token and Chat ID first.');
+      return;
+    }
+
+    setIsSendingTelegram(true);
+    setRestoreError(null);
+    try {
+      const data = exportFullDatabase();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const formData = new FormData();
+      formData.append('chat_id', chatId);
+      formData.append('caption', `Dairy Diary backup — ${getDeviceTodayDate()}`);
+      formData.append('document', blob, `dairy-diary-backup-${getDeviceTodayDate()}.json`);
+
+      const res = await fetch(`https://api.telegram.org/bot${token}/sendDocument`, {
+        method: 'POST',
+        body: formData,
+      });
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok || !result.ok) {
+        throw new Error(result.description || `Telegram API error (${res.status})`);
+      }
+
+      recordBackupSuccess();
+      if (showToast) showToast('Backup sent to Telegram successfully');
+    } catch (err) {
+      console.error('Telegram backup failed', err);
+      setRestoreError(`Failed to send backup to Telegram: ${(err as Error)?.message || 'unknown error'}`);
+    } finally {
+      setIsSendingTelegram(false);
+    }
+  };
+
   // "BACK UP NOW (CLOUD)" — uploads to the connected Google account's hidden Drive
   // appDataFolder. Falls back to an on-device localStorage snapshot if Google has never
   // been connected, so the button still works without requiring a Google account. If a
@@ -412,7 +457,8 @@ export const BackupModal: React.FC<BackupModalProps> = ({
     }
   };
 
-  // Real JSON Restore
+  // Real JSON Restore — parses the file and stages it behind a confirmation dialog rather
+  // than overwriting localStorage immediately (see pendingRestoreData + confirmRestoreFromFile).
   const handleRestoreFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     setRestoreError(null);
     const file = e.target.files?.[0];
@@ -423,21 +469,27 @@ export const BackupModal: React.FC<BackupModalProps> = ({
       try {
         const text = event.target?.result as string;
         const parsed = JSON.parse(text);
-        const success = restoreFullDatabase(parsed);
-        if (success) {
-          if (showToast) showToast('Database successfully restored from backup file!');
-          if (onRestoreSuccess) {
-            onRestoreSuccess();
-          }
-          onClose();
-        } else {
-          setRestoreError('Invalid backup file format. Please upload a valid Dairy Diary JSON backup.');
-        }
+        setPendingRestoreData(parsed);
       } catch (err) {
         setRestoreError('Failed to parse backup file. Please select a valid JSON file.');
       }
     };
     reader.readAsText(file);
+    e.target.value = '';
+  };
+
+  const confirmRestoreFromFile = () => {
+    const success = restoreFullDatabase(pendingRestoreData);
+    setPendingRestoreData(null);
+    if (success) {
+      if (showToast) showToast('Database successfully restored from backup file!');
+      if (onRestoreSuccess) {
+        onRestoreSuccess();
+      }
+      onClose();
+    } else {
+      setRestoreError('Invalid backup file format. Please upload a valid Dairy Diary JSON backup.');
+    }
   };
 
   const frequencyOptions: { value: BackupFrequency; label: string }[] = [
@@ -600,6 +652,46 @@ export const BackupModal: React.FC<BackupModalProps> = ({
 
             {showAdvanced && (
               <div className="space-y-1.5 pt-2">
+                {/* Telegram Bot Backup */}
+                <div className="p-3 rounded-xl glass-card border border-[#D6E9E1] space-y-2">
+                  <h5 className="text-[11px] font-extrabold uppercase tracking-wider text-[#55756D]">
+                    Telegram Bot Backup
+                  </h5>
+                  <div>
+                    <label className="block text-[10px] font-bold text-[#55756D] mb-1">Telegram Bot Token</label>
+                    <input
+                      type="password"
+                      value={businessSettings.telegramBotToken || ''}
+                      onChange={(e) =>
+                        onUpdateSettings({ ...businessSettings, telegramBotToken: e.target.value })
+                      }
+                      placeholder="123456:ABC-DEF..."
+                      className="w-full px-2.5 py-2 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-900 outline-none focus:ring-1 focus:ring-emerald-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-[#55756D] mb-1">Telegram Chat ID</label>
+                    <input
+                      type="text"
+                      value={businessSettings.telegramChatId || ''}
+                      onChange={(e) =>
+                        onUpdateSettings({ ...businessSettings, telegramChatId: e.target.value })
+                      }
+                      placeholder="e.g. 123456789"
+                      className="w-full px-2.5 py-2 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-900 outline-none focus:ring-1 focus:ring-emerald-500"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleBackupToTelegram}
+                    disabled={isSendingTelegram}
+                    className="w-full py-2.5 bg-[#229ED9] hover:bg-[#1c8ac0] text-white text-xs font-extrabold rounded-xl shadow-sm transition-colors cursor-pointer flex items-center justify-center gap-2 disabled:opacity-60"
+                  >
+                    {isSendingTelegram ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                    Backup to Telegram
+                  </button>
+                </div>
+
                 <button
                   type="button"
                   onClick={handleExportJSON}
@@ -632,6 +724,53 @@ export const BackupModal: React.FC<BackupModalProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Strong confirmation before a JSON import overwrites ALL local data */}
+      {pendingRestoreData && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in select-none"
+          onClick={() => setPendingRestoreData(null)}
+        >
+          <div
+            className="w-full max-w-sm bg-white rounded-3xl p-5 shadow-2xl space-y-4 border border-rose-100"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-2.5 text-rose-600">
+              <div className="w-9 h-9 rounded-full bg-rose-100 flex items-center justify-center shrink-0">
+                <AlertCircle className="w-5 h-5 text-rose-600" />
+              </div>
+              <div>
+                <h3 className="font-extrabold text-sm text-slate-900 leading-tight">Overwrite All Data?</h3>
+                <p className="text-[11px] text-slate-500 font-medium">This cannot be undone</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Importing this file will{' '}
+              <span className="font-bold text-rose-700">permanently replace ALL current data</span> — every
+              customer, entry, payment, and setting — with the contents of this backup file. This cannot be
+              undone.
+            </p>
+
+            <div className="flex items-center gap-2.5 pt-1">
+              <button
+                type="button"
+                onClick={() => setPendingRestoreData(null)}
+                className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-700 rounded-xl text-xs font-bold transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmRestoreFromFile}
+                className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-white rounded-xl text-xs font-black shadow-sm transition-colors cursor-pointer"
+              >
+                Overwrite &amp; Import
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

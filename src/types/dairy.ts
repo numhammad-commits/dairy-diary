@@ -161,6 +161,8 @@ export interface BusinessSettings {
   lastBackupTimestamp: string;
   savedRegionPayments?: Record<string, Record<string, any>>;
   vehicleSettings?: VehicleSettings;
+  telegramBotToken?: string;
+  telegramChatId?: string;
 }
 
 export interface PaymentRecord {

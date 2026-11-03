@@ -1259,6 +1259,8 @@ export default function App() {
           onClose={() => setShowBackupModal(false)}
           onRestoreSuccess={handleReloadFromStorage}
           showToast={showToast}
+          businessSettings={businessSettings}
+          onUpdateSettings={setBusinessSettings}
         />
       )}
 
