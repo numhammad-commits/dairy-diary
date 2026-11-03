@@ -658,6 +658,90 @@ export default function App() {
     showToast(`Payment of Rs ${amount.toLocaleString('en-PK')} received.`);
   };
 
+  const handleEditPayment = (
+    paymentId: string,
+    updates: { amount: number; paymentMethod: string }
+  ) => {
+    const existing = paymentRecords.find((p) => p.id === paymentId);
+    if (!existing) return;
+
+    const amountDelta = updates.amount - existing.amount;
+    const resolvedMonth = existing.billingMonth || existing.date.substring(0, 7);
+    const isCurrentMonth = resolvedMonth === currentMonthKey;
+
+    if (amountDelta !== 0) {
+      setContacts((prev) =>
+        prev.map((c) =>
+          c.id === existing.contactId
+            ? {
+                ...c,
+                currentMonthDue: isCurrentMonth
+                  ? Math.max(0, (c.currentMonthDue || 0) - amountDelta)
+                  : (c.currentMonthDue || 0),
+                totalLifetimeDue: Math.max(0, (c.totalLifetimeDue || 0) - amountDelta),
+              }
+            : c
+        )
+      );
+      setSelectedContact((prev) =>
+        prev && prev.id === existing.contactId
+          ? {
+              ...prev,
+              currentMonthDue: isCurrentMonth
+                ? Math.max(0, (prev.currentMonthDue || 0) - amountDelta)
+                : (prev.currentMonthDue || 0),
+              totalLifetimeDue: Math.max(0, (prev.totalLifetimeDue || 0) - amountDelta),
+            }
+          : prev
+      );
+    }
+
+    setPaymentRecords((prev) =>
+      prev.map((p) =>
+        p.id === paymentId
+          ? { ...p, amount: updates.amount, paymentMethod: updates.paymentMethod }
+          : p
+      )
+    );
+    showToast('Payment updated');
+  };
+
+  const handleDeletePayment = (paymentId: string) => {
+    const existing = paymentRecords.find((p) => p.id === paymentId);
+    if (!existing) return;
+
+    const resolvedMonth = existing.billingMonth || existing.date.substring(0, 7);
+    const isCurrentMonth = resolvedMonth === currentMonthKey;
+
+    setContacts((prev) =>
+      prev.map((c) =>
+        c.id === existing.contactId
+          ? {
+              ...c,
+              currentMonthDue: isCurrentMonth
+                ? (c.currentMonthDue || 0) + existing.amount
+                : (c.currentMonthDue || 0),
+              totalLifetimeDue: (c.totalLifetimeDue || 0) + existing.amount,
+            }
+          : c
+      )
+    );
+    setSelectedContact((prev) =>
+      prev && prev.id === existing.contactId
+        ? {
+            ...prev,
+            currentMonthDue: isCurrentMonth
+              ? (prev.currentMonthDue || 0) + existing.amount
+              : (prev.currentMonthDue || 0),
+            totalLifetimeDue: (prev.totalLifetimeDue || 0) + existing.amount,
+          }
+        : prev
+    );
+
+    setPaymentRecords((prev) => prev.filter((p) => p.id !== paymentId));
+    showToast('Payment deleted');
+  };
+
   const handleUpdateContactRate = (contactId: string, newRate: number) => {
     setContacts((prev) =>
       prev.map((c) => (c.id === contactId ? { ...c, defaultRate: newRate } : c))
@@ -1115,6 +1199,8 @@ export default function App() {
             setQuickAddContact(c);
           }}
           onSettlePayment={handleSettlePayment}
+          onEditPayment={handleEditPayment}
+          onDeletePayment={handleDeletePayment}
           onSaveNewEntry={handleSaveEntry}
           onSaveBulkEntries={handleSaveBulkEntries}
           onUpdateContactRate={handleUpdateContactRate}

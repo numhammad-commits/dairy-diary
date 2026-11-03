@@ -111,6 +111,8 @@ interface ContactDetailModalProps {
   onClose: () => void;
   onQuickAdd: (contact: Contact) => void;
   onSettlePayment: (contactId: string, amount: number, paymentDate?: string, paymentMethod?: string, notes?: string, targetMonth?: string) => void;
+  onEditPayment?: (paymentId: string, updates: { amount: number; paymentMethod: string }) => void;
+  onDeletePayment?: (paymentId: string) => void;
   onSaveNewEntry?: (entry: Omit<LedgerEntry, 'id'>) => void;
   onSaveBulkEntries?: (newEntries: Omit<LedgerEntry, 'id'>[]) => void;
   onUpdateContactRate?: (contactId: string, newRate: number) => void;
@@ -133,6 +135,8 @@ export const ContactDetailModal: React.FC<ContactDetailModalProps> = ({
   onClose,
   onQuickAdd,
   onSettlePayment,
+  onEditPayment,
+  onDeletePayment,
   onSaveNewEntry,
   onSaveBulkEntries,
   onUpdateContactRate,
@@ -1220,6 +1224,8 @@ export const ContactDetailModal: React.FC<ContactDetailModalProps> = ({
             paymentRecords={customerPayments}
             currentMonthKey={currentMonthKey}
             onClose={() => setShowPaymentHistory(false)}
+            onEditPayment={onEditPayment}
+            onDeletePayment={onDeletePayment}
           />
         )}
 
