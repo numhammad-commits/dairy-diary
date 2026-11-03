@@ -4,6 +4,7 @@
   "description": "Professional mobile ledger, billing, and records management app for dairy farms and milk suppliers in Pakistan.",
   "start_url": "/",
   "scope": "/",
+  "id": "/",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#F4FBF7",
