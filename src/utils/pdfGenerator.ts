@@ -254,16 +254,24 @@ export async function generateSawaaPdfDocument(
       // regardless of whether the source image is square or rectangular.
       doc.setFillColor(255, 255, 255);
       doc.circle(logoCX, logoCY, logoR, 'F');
-      // Configurable from Settings (businessSettings.pdfLogoSize) so a future
-      // rectangular logo doesn't need a code change. Falls back to the
-      // geometric default (logoR×1.3 ≈13mm) that keeps even a square logo's
-      // diagonal inside the logoR-radius ring if nothing is configured.
-      const maxDim = businessSettings?.pdfLogoSize || logoR * 1.3;
+      // No manual sizing needed: the image is clipped to the exact logoR
+      // circle below, so any square/rectangular source (including a logo
+      // with an opaque black background) always ends up a clean circle —
+      // corners outside the ring are cropped, never squeezed or distorted.
+      const maxDim = 2 * logoR;
       const dims = await loadImageNaturalSize(businessSettings.logoUrl);
       const { w: drawW, h: drawH } = dims
         ? computeContainSize(dims.width, dims.height, maxDim, maxDim)
         : { w: maxDim, h: maxDim };
+      // Clip to a circle matching the white backdrop exactly, so the image
+      // (scaled to fill the full ring diameter by computeContainSize above)
+      // renders as a perfect circle instead of a square poking out.
+      doc.saveGraphicsState();
+      doc.circle(logoCX, logoCY, logoR, null);
+      doc.clip();
+      doc.discardPath();
       doc.addImage(businessSettings.logoUrl, imgFormat, logoCX - drawW / 2, logoCY - drawH / 2, drawW, drawH);
+      doc.restoreGraphicsState();
       logoDrawn = true;
     } catch (err) {
       console.warn('Failed to render uploaded logo in PDF, using fallback emblem:', err);

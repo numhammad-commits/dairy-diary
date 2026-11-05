@@ -163,7 +163,6 @@ export interface BusinessSettings {
   vehicleSettings?: VehicleSettings;
   telegramBotToken?: string;
   telegramChatId?: string;
-  pdfLogoSize?: number; // max width/height (mm) for the logo in the PDF header; default 13
 }
 
 export interface PaymentRecord {

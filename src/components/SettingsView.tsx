@@ -25,8 +25,7 @@ import {
   AlertCircle,
   X,
   Fuel,
-  Pencil,
-  Maximize2
+  Pencil
 } from 'lucide-react';
 import { BusinessSettings, LedgerEntry } from '../types/dairy';
 import { SawaaLogo } from './SawaaLogo';
@@ -344,29 +343,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </div>
               </div>
             </div>
-
-            {/* PDF Logo Size */}
-            <div className="relative pt-1">
-              <Maximize2 className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input
-                type="number"
-                min="5"
-                max="25"
-                step="0.5"
-                value={form.pdfLogoSize ?? 13}
-                onChange={(e) => setForm({ ...form, pdfLogoSize: parseFloat(e.target.value) || 13 })}
-                placeholder="PDF Logo Size (mm)"
-                readOnly={!isEditingProfile}
-                className={`w-full pl-9 pr-3 py-2 text-xs font-semibold rounded-xl shadow-xs focus:outline-none ${
-                  isEditingProfile
-                    ? 'text-slate-900 bg-white border border-slate-300 focus:ring-1 focus:ring-emerald-500'
-                    : 'text-slate-500 bg-slate-100 border border-slate-200 cursor-not-allowed'
-                }`}
-              />
-            </div>
-            <p className="text-[10px] text-[#55756D]/80 px-1">
-              Max size (mm) your logo is scaled to inside the gold ring on PDF bills. Default 13mm.
-            </p>
 
             {/* Address Input */}
             <div className="relative pt-1">
