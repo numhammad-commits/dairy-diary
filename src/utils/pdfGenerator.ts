@@ -254,7 +254,11 @@ export async function generateSawaaPdfDocument(
       // regardless of whether the source image is square or rectangular.
       doc.setFillColor(255, 255, 255);
       doc.circle(logoCX, logoCY, logoR, 'F');
-      const maxDim = 17;
+      // Configurable from Settings (businessSettings.pdfLogoSize) so a future
+      // rectangular logo doesn't need a code change. Falls back to the
+      // geometric default (logoR×1.3 ≈13mm) that keeps even a square logo's
+      // diagonal inside the logoR-radius ring if nothing is configured.
+      const maxDim = businessSettings?.pdfLogoSize || logoR * 1.3;
       const dims = await loadImageNaturalSize(businessSettings.logoUrl);
       const { w: drawW, h: drawH } = dims
         ? computeContainSize(dims.width, dims.height, maxDim, maxDim)
