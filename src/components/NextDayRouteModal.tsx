@@ -28,6 +28,7 @@ export const NextDayRouteModal: React.FC<NextDayRouteModalProps> = ({
   const tomorrowDate = useMemo(() => shiftDateString(getDeviceTodayDate(), 1), []);
   const todayDate = useMemo(() => getDeviceTodayDate(), []);
   const [viewMode, setViewMode] = useState<'today' | 'tomorrow'>('tomorrow');
+  const [selectedArea, setSelectedArea] = useState<string>('all');
 
   // Only active buyer (customer) contacts are eligible for a delivery route —
   // sellers are farmers the business buys from, not delivery customers.
@@ -37,9 +38,27 @@ export const NextDayRouteModal: React.FC<NextDayRouteModalProps> = ({
     [contacts]
   );
 
+  // Unique areas computed from the UNFILTERED eligible contacts, so the pill
+  // list itself never shrinks as the user filters.
+  const uniqueAreas = useMemo(() => {
+    const areas = new Set<string>();
+    eligibleContacts.forEach((c) => {
+      if (c.area?.trim()) areas.add(c.area.trim());
+    });
+    return Array.from(areas).sort();
+  }, [eligibleContacts]);
+
+  // Single filtering source point — every row/total below derives from this,
+  // so an area filter automatically scopes Pending/Already Added/Delivered/
+  // Missing and all footer totals without duplicating any logic.
+  const filteredContacts = useMemo(
+    () => (selectedArea === 'all' ? eligibleContacts : eligibleContacts.filter((c) => c.area === selectedArea)),
+    [eligibleContacts, selectedArea]
+  );
+
   const rows = useMemo(
     () =>
-      eligibleContacts.map((c) => {
+      filteredContacts.map((c) => {
         // If a real entry already exists for tomorrow, show its ACTUAL saved
         // quantity/rate/amount — not the customer's default — since the two can
         // differ (e.g. a one-off larger order).
@@ -61,7 +80,7 @@ export const NextDayRouteModal: React.FC<NextDayRouteModalProps> = ({
         const rate = c.defaultRate || 240;
         return { contact: c, qty, rate, amount: Math.round(qty * rate), alreadyExists: false };
       }),
-    [eligibleContacts, entries, tomorrowDate]
+    [filteredContacts, entries, tomorrowDate]
   );
 
   const pendingRows = rows.filter((r) => !r.alreadyExists);
@@ -72,7 +91,7 @@ export const NextDayRouteModal: React.FC<NextDayRouteModalProps> = ({
   // simply "have we delivered to them today," not shift bookkeeping.
   const todayRows = useMemo(
     () =>
-      eligibleContacts.map((c) => {
+      filteredContacts.map((c) => {
         const matchingEntry = entries.find((e) => e.contactId === c.id && e.date === todayDate);
         if (matchingEntry) {
           return {
@@ -87,7 +106,7 @@ export const NextDayRouteModal: React.FC<NextDayRouteModalProps> = ({
         const rate = c.defaultRate || 240;
         return { contact: c, qty, rate, amount: Math.round(qty * rate), delivered: false };
       }),
-    [eligibleContacts, entries, todayDate]
+    [filteredContacts, entries, todayDate]
   );
 
   const deliveredTodayRows = todayRows.filter((r) => r.delivered);
@@ -194,13 +213,46 @@ export const NextDayRouteModal: React.FC<NextDayRouteModalProps> = ({
           </button>
         </div>
 
+        {/* Area Filter */}
+        {uniqueAreas.length > 0 && (
+          <div className="mx-4 mt-2 shrink-0 flex items-center gap-1.5 overflow-x-auto pb-1 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+            <button
+              type="button"
+              onClick={() => setSelectedArea('all')}
+              className={`shrink-0 px-3 py-1.5 rounded-full text-[11px] font-bold border transition-all cursor-pointer whitespace-nowrap ${
+                selectedArea === 'all'
+                  ? 'bg-[#0B8F68] text-white border-[#0B8F68] shadow-xs'
+                  : 'bg-white text-[#163B32] border-[#D6E9E1] hover:border-[#0B8F68]/40'
+              }`}
+            >
+              All Areas
+            </button>
+            {uniqueAreas.map((area) => (
+              <button
+                key={area}
+                type="button"
+                onClick={() => setSelectedArea(area)}
+                className={`shrink-0 px-3 py-1.5 rounded-full text-[11px] font-bold border transition-all cursor-pointer whitespace-nowrap ${
+                  selectedArea === area
+                    ? 'bg-[#0B8F68] text-white border-[#0B8F68] shadow-xs'
+                    : 'bg-white text-[#163B32] border-[#D6E9E1] hover:border-[#0B8F68]/40'
+                }`}
+              >
+                {area}
+              </button>
+            ))}
+          </div>
+        )}
+
         {/* Customer List: grouped into Pending / Already Added (Tomorrow), or Delivered / Missing (Today) */}
         <div className="flex-1 min-h-0 overflow-y-auto px-4 pt-3 pb-2 space-y-2">
           {viewMode === 'today' ? (
             todayRows.length === 0 ? (
               <div className="py-10 text-center">
                 <Users className="w-8 h-8 text-[#55756D]/60 mx-auto mb-2" />
-                <p className="text-sm font-bold text-[#163B32]">No active customers found</p>
+                <p className="text-sm font-bold text-[#163B32]">
+                  {selectedArea === 'all' ? 'No active customers found' : `No customers in ${selectedArea}`}
+                </p>
               </div>
             ) : (
               <>
@@ -274,7 +326,9 @@ export const NextDayRouteModal: React.FC<NextDayRouteModalProps> = ({
           ) : rows.length === 0 ? (
             <div className="py-10 text-center">
               <Users className="w-8 h-8 text-[#55756D]/60 mx-auto mb-2" />
-              <p className="text-sm font-bold text-[#163B32]">No active customers found</p>
+              <p className="text-sm font-bold text-[#163B32]">
+                {selectedArea === 'all' ? 'No active customers found' : `No customers in ${selectedArea}`}
+              </p>
             </div>
           ) : (
             <>
